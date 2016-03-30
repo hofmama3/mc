@@ -14,6 +14,8 @@
 #include "src/keybind-defaults.h"       /* global_keymap_t */
 #include "src/filemanager/dir.h"        /* dir_list */
 
+#include "mcviewer.h"
+
 /*** typedefs(not structures) and defined constants **********************************************/
 
 typedef unsigned char byte;
@@ -87,7 +89,7 @@ typedef struct
 
 struct mcview_nroff_struct;
 
-typedef struct mcview_struct
+struct mcview_struct
 {
     Widget widget;
 
@@ -182,11 +184,10 @@ typedef struct mcview_struct
 
     dir_list *dir;              /* List of current directory files
                                  * to handle CK_FileNext and CK_FilePrev commands */
-    int *dir_count;             /* Number of files in dir structure.
-                                 * Pointer is used here as reference to WPanel::count */
     int *dir_idx;               /* Index of current file in dir structure.
-                                 * Pointer is used here as reference to WPanel::count */
-} mcview_t;
+                                 * Pointer is used here as reference to WPanel::dir::count */
+    vfs_path_t *ext_script;     /* Temporary script file created by regex_command_for() */
+};
 
 typedef struct mcview_nroff_struct
 {
@@ -215,7 +216,8 @@ extern mcview_search_options_t mcview_search_options;
 
 /* actions_cmd.c:  */
 cb_ret_t mcview_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data);
-cb_ret_t mcview_dialog_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, void *data);
+cb_ret_t mcview_dialog_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm,
+                                 void *data);
 
 /* coord_cache.c: */
 coord_cache_t *coord_cache_new (void);
@@ -279,7 +281,6 @@ void mcview_toggle_magic_mode (mcview_t * view);
 void mcview_toggle_wrap_mode (mcview_t * view);
 void mcview_toggle_nroff_mode (mcview_t * view);
 void mcview_toggle_hex_mode (mcview_t * view);
-gboolean mcview_ok_to_quit (mcview_t * view);
 void mcview_init (mcview_t * view);
 void mcview_done (mcview_t * view);
 void mcview_select_encoding (mcview_t * view);
@@ -287,14 +288,13 @@ void mcview_set_codeset (mcview_t * view);
 void mcview_show_error (mcview_t * view, const char *error);
 off_t mcview_bol (mcview_t * view, off_t current, off_t limit);
 off_t mcview_eol (mcview_t * view, off_t current, off_t limit);
-char *mcview_get_title (const Dlg_head * h, size_t len);
+char *mcview_get_title (const WDialog * h, size_t len);
 
 /* move.c */
 void mcview_move_up (mcview_t *, off_t);
 void mcview_move_down (mcview_t *, off_t);
 void mcview_move_left (mcview_t *, off_t);
 void mcview_move_right (mcview_t *, off_t);
-void mcview_scroll_to_cursor (mcview_t *);
 void mcview_moveto_top (mcview_t *);
 void mcview_moveto_bottom (mcview_t *);
 void mcview_moveto_bol (mcview_t *);
@@ -324,7 +324,7 @@ void mcview_display_text (mcview_t *);
 /* search.c: */
 mc_search_cbret_t mcview_search_cmd_callback (const void *user_data, gsize char_offset,
                                               int *current_char);
-int mcview_search_update_cmd_callback (const void *, gsize);
+mc_search_cbret_t mcview_search_update_cmd_callback (const void *user_data, gsize char_offset);
 void mcview_do_search (mcview_t * view);
 
 /*** inline functions ****************************************************************************/

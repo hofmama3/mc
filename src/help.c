@@ -2,7 +2,7 @@
    Hypertext file browser.
 
    Copyright (C) 1994, 1995, 1998, 1999, 2000, 2001, 2002, 2003, 2004,
-   2005, 2006, 2007, 2011
+   2005, 2006, 2007, 2011, 2013
    The Free Software Foundation, Inc.
 
    This file is part of the Midnight Commander.
@@ -44,7 +44,7 @@
  *  Lazyness/widgeting attack: This file does use the dialog manager
  *  and uses mainly the dialog to achieve the help work.  there is only
  *  one specialized widget and it's only used to forward the mouse messages
- *  to the appropiate routine.
+ *  to the appropriate routine.
  */
 
 
@@ -66,7 +66,6 @@
 #include "lib/widget.h"
 #include "lib/event-types.h"
 
-#include "keybind-defaults.h"
 #include "keybind-defaults.h"
 #include "help.h"
 
@@ -104,7 +103,7 @@ static const char *currentpoint;
 static const char *selected_item;
 
 /* The widget variables */
-static Dlg_head *whelp;
+static WDialog *whelp;
 
 static struct
 {
@@ -115,7 +114,7 @@ static struct
 static GSList *link_area = NULL;
 static gboolean inside_link_area = FALSE;
 
-static cb_ret_t help_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, void *data);
+static cb_ret_t help_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data);
 
 /*** file scope functions ************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
@@ -297,9 +296,7 @@ move_to_bottom (void)
 static const char *
 help_follow_link (const char *start, const char *lc_selected_item)
 {
-    char link_name[MAXLINKNAME];
     const char *p;
-    int i = 0;
 
     if (lc_selected_item == NULL)
         return start;
@@ -308,6 +305,9 @@ help_follow_link (const char *start, const char *lc_selected_item)
         ;
     if (*p == CHAR_LINK_POINTER)
     {
+        int i;
+        char link_name[MAXLINKNAME];
+
         link_name[0] = '[';
         for (i = 1; *p != CHAR_LINK_END && *p && *p != CHAR_NODE_END && i < MAXLINKNAME - 3;)
             link_name[i++] = *++p;
@@ -394,8 +394,7 @@ end_link_area (int x, int y)
 static void
 clear_link_areas (void)
 {
-    g_slist_foreach (link_area, (GFunc) g_free, NULL);
-    g_slist_free (link_area);
+    g_slist_free_full (link_area, g_free);
     link_area = NULL;
     inside_link_area = FALSE;
 }
@@ -403,7 +402,7 @@ clear_link_areas (void)
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-help_print_word (Dlg_head * h, GString * word, int *col, int *line, gboolean add_space)
+help_print_word (WDialog * h, GString * word, int *col, int *line, gboolean add_space)
 {
     if (*line >= help_lines)
         g_string_set_size (word, 0);
@@ -447,7 +446,7 @@ help_print_word (Dlg_head * h, GString * word, int *col, int *line, gboolean add
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-help_show (Dlg_head * h, const char *paint_start)
+help_show (WDialog * h, const char *paint_start)
 {
     const char *p, *n;
     int col, line, c;
@@ -543,7 +542,7 @@ help_show (Dlg_head * h, const char *paint_start)
                 }
                 break;
             case ' ':
-                /* word delimeter */
+                /* word delimiter */
                 if (painting)
                     help_print_word (h, word, &col, &line, TRUE);
                 break;
@@ -563,7 +562,8 @@ help_show (Dlg_head * h, const char *paint_start)
 #ifndef HAVE_SLANG
                             tty_print_char (acs_map[c]);
 #else
-                            SLsmg_draw_object (WIDGET (h)->y + line + 2, WIDGET (h)->x + col + 2, c);
+                            SLsmg_draw_object (WIDGET (h)->y + line + 2, WIDGET (h)->x + col + 2,
+                                               c);
 #endif
                         col++;
                     }
@@ -627,7 +627,7 @@ help_event (Gpm_Event * event, void *vp)
         if (history_ptr < 0)
             history_ptr = HISTORY_SIZE - 1;
 
-        help_callback (w->owner, NULL, DLG_DRAW, 0, NULL);
+        send_message (w->owner, NULL, MSG_DRAW, 0, NULL);
         return MOU_NORMAL;
     }
 
@@ -675,7 +675,7 @@ help_event (Gpm_Event * event, void *vp)
         move_forward (1);
 
     /* Show the new node */
-    help_callback (w->owner, NULL, DLG_DRAW, 0, NULL);
+    send_message (w->owner, NULL, MSG_DRAW, 0, NULL);
 
     return MOU_NORMAL;
 }
@@ -684,7 +684,7 @@ help_event (Gpm_Event * event, void *vp)
 /** show help */
 
 static void
-help_help (Dlg_head * h)
+help_help (WDialog * h)
 {
     const char *p;
 
@@ -697,14 +697,14 @@ help_help (Dlg_head * h)
     {
         currentpoint = p + 1;   /* Skip the newline following the start of the node */
         selected_item = NULL;
-        help_callback (h, NULL, DLG_DRAW, 0, NULL);
+        send_message (h, NULL, MSG_DRAW, 0, NULL);
     }
 }
 
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-help_index (Dlg_head * h)
+help_index (WDialog * h)
 {
     const char *new_item;
 
@@ -720,14 +720,14 @@ help_index (Dlg_head * h)
 
         currentpoint = new_item + 1;    /* Skip the newline following the start of the node */
         selected_item = NULL;
-        help_callback (h, NULL, DLG_DRAW, 0, NULL);
+        send_message (h, NULL, MSG_DRAW, 0, NULL);
     }
 }
 
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-help_back (Dlg_head * h)
+help_back (WDialog * h)
 {
     currentpoint = history[history_ptr].page;
     selected_item = history[history_ptr].link;
@@ -735,7 +735,7 @@ help_back (Dlg_head * h)
     if (history_ptr < 0)
         history_ptr = HISTORY_SIZE - 1;
 
-    help_callback (h, NULL, DLG_DRAW, 0, NULL); /* FIXME: unneeded? */
+    send_message (h, NULL, MSG_DRAW, 0, NULL);  /* FIXME: unneeded? */
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -926,7 +926,7 @@ help_execute_cmd (unsigned long command)
 /* --------------------------------------------------------------------------------------------- */
 
 static cb_ret_t
-help_handle_key (Dlg_head * h, int c)
+help_handle_key (WDialog * h, int c)
 {
     unsigned long command;
 
@@ -934,35 +934,39 @@ help_handle_key (Dlg_head * h, int c)
     if ((command == CK_IgnoreKey) || (help_execute_cmd (command) == MSG_NOT_HANDLED))
         return MSG_NOT_HANDLED;
 
-    help_callback (h, NULL, DLG_DRAW, 0, NULL);
+    send_message (h, NULL, MSG_DRAW, 0, NULL);
     return MSG_HANDLED;
 }
 
 /* --------------------------------------------------------------------------------------------- */
 
 static cb_ret_t
-help_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, void *data)
+help_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
-    WButtonBar *bb;
+    WDialog *h = DIALOG (w);
 
     switch (msg)
     {
-    case DLG_RESIZE:
-        help_lines = min (LINES - 4, max (2 * LINES / 3, 18));
-        dlg_set_size (h, help_lines + 4, HELP_WINDOW_WIDTH + 4);
-        bb = find_buttonbar (h);
-        widget_set_size (WIDGET (bb), LINES - 1, 0, 1, COLS);
-        return MSG_HANDLED;
+    case MSG_RESIZE:
+        {
+            WButtonBar *bb;
 
-    case DLG_DRAW:
-        common_dialog_repaint (h);
+            help_lines = min (LINES - 4, max (2 * LINES / 3, 18));
+            dlg_set_size (h, help_lines + 4, HELP_WINDOW_WIDTH + 4);
+            bb = find_buttonbar (h);
+            widget_set_size (WIDGET (bb), LINES - 1, 0, 1, COLS);
+            return MSG_HANDLED;
+        }
+
+    case MSG_DRAW:
+        dlg_default_repaint (h);
         help_show (h, currentpoint);
         return MSG_HANDLED;
 
-    case DLG_KEY:
+    case MSG_KEY:
         return help_handle_key (h, parm);
 
-    case DLG_ACTION:
+    case MSG_ACTION:
         /* shortcut */
         if (sender == NULL)
             return help_execute_cmd (parm);
@@ -970,13 +974,13 @@ help_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, void *dat
         if (sender == WIDGET (find_buttonbar (h)))
         {
             if (data != NULL)
-                return send_message (WIDGET (data), NULL, WIDGET_COMMAND, parm, NULL);
+                return send_message (data, NULL, MSG_ACTION, parm, NULL);
             return help_execute_cmd (parm);
         }
         return MSG_NOT_HANDLED;
 
     default:
-        return default_dlg_callback (h, sender, msg, parm, data);
+        return dlg_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -1026,12 +1030,12 @@ md_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data
 {
     switch (msg)
     {
-    case WIDGET_RESIZED:
+    case MSG_RESIZE:
         w->lines = help_lines;
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -1040,8 +1044,10 @@ md_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data
 static Widget *
 mousedispatch_new (int y, int x, int yl, int xl)
 {
-    Widget *w = g_new (Widget, 1);
-    init_widget (w, y, x, yl, xl, md_callback, help_event);
+    Widget *w;
+
+    w = g_new (Widget, 1);
+    widget_init (w, y, x, yl, xl, md_callback, help_event);
     return w;
 }
 
@@ -1114,7 +1120,7 @@ help_interactive_display (const gchar * event_group_name, const gchar * event_na
     help_lines = min (LINES - 4, max (2 * LINES / 3, 18));
 
     whelp =
-        create_dlg (TRUE, 0, 0, help_lines + 4, HELP_WINDOW_WIDTH + 4,
+        dlg_create (TRUE, 0, 0, help_lines + 4, HELP_WINDOW_WIDTH + 4,
                     help_colors, help_callback, NULL, "[Help]", _("Help"),
                     DLG_TRYUP | DLG_CENTER | DLG_WANT_TAB);
 
@@ -1148,9 +1154,9 @@ help_interactive_display (const gchar * event_group_name, const gchar * event_na
     buttonbar_set_label (help_bar, 9, "", help_map, NULL);
     buttonbar_set_label (help_bar, 10, Q_ ("ButtonBar|Quit"), help_map, NULL);
 
-    run_dlg (whelp);
+    dlg_run (whelp);
     interactive_display_finish ();
-    destroy_dlg (whelp);
+    dlg_destroy (whelp);
     return TRUE;
 }
 

@@ -137,6 +137,7 @@ typedef struct vfs_class
     void *data;                 /* this is for filesystem's own use */
     int verrno;                 /* can't use errno because glibc2 might define errno as function */
 
+    /* *INDENT-OFF* */
     int (*init) (struct vfs_class * me);
     void (*done) (struct vfs_class * me);
 
@@ -154,8 +155,8 @@ typedef struct vfs_class
 
     void *(*open) (const vfs_path_t * vpath, int flags, mode_t mode);
     int (*close) (void *vfs_info);
-      ssize_t (*read) (void *vfs_info, char *buffer, size_t count);
-      ssize_t (*write) (void *vfs_info, const char *buf, size_t count);
+    ssize_t (*read) (void *vfs_info, char *buffer, size_t count);
+    ssize_t (*write) (void *vfs_info, const char *buf, size_t count);
 
     void *(*opendir) (const vfs_path_t * vpath);
     void *(*readdir) (void *vfs_info);
@@ -176,10 +177,10 @@ typedef struct vfs_class
     int (*rename) (const vfs_path_t * vpath1, const vfs_path_t * vpath2);
     int (*chdir) (const vfs_path_t * vpath);
     int (*ferrno) (struct vfs_class * me);
-      off_t (*lseek) (void *vfs_info, off_t offset, int whence);
+    off_t (*lseek) (void *vfs_info, off_t offset, int whence);
     int (*mknod) (const vfs_path_t * vpath, mode_t mode, dev_t dev);
 
-      vfsid (*getid) (const vfs_path_t * vpath);
+    vfsid (*getid) (const vfs_path_t * vpath);
 
     int (*nothingisopen) (vfsid id);
     void (*free) (vfsid id);
@@ -193,6 +194,7 @@ typedef struct vfs_class
 
     int (*ctl) (void *vfs_info, int ctlop, void *arg);
     int (*setctl) (const vfs_path_t * vpath, int ctlop, void *arg);
+    /* *INDENT-ON* */
 } vfs_class;
 
 /*
@@ -245,13 +247,13 @@ vfs_class_flags_t vfs_file_class_flags (const vfs_path_t * vpath);
 /* translate path back to terminal encoding, remove all #enc:
  * every invalid character is replaced with question mark
  * return static buffer */
-char *vfs_translate_path (const char *path);
+const char *vfs_translate_path (const char *path);
 /* return new string */
 char *vfs_translate_path_n (const char *path);
 
 void vfs_stamp_path (const char *path);
 
-void vfs_release_path (const char *dir);
+void vfs_release_path (const vfs_path_t * vpath);
 
 void vfs_fill_names (fill_names_f);
 
@@ -269,10 +271,6 @@ void vfs_free_handle (int handle);
 
 void vfs_setup_cwd (void);
 char *_vfs_get_cwd (void);
-
-#ifdef HAVE_CHARSET
-vfs_path_t *vfs_change_encoding (vfs_path_t * vpath, const char *encoding);
-#endif
 
 int vfs_preallocate (int dest_desc, off_t src_fsize, off_t dest_fsize);
 

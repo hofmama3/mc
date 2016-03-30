@@ -1,6 +1,10 @@
 
-AM_CPPFLAGS = -DTEST_SHARE_DIR=\"$(abs_srcdir)\"
-AM_CFLAGS = -I$(top_srcdir) -I$(top_srcdir)/lib/vfs $(GLIB_CFLAGS) @CHECK_CFLAGS@
+AM_CPPFLAGS = \
+	-DTEST_SHARE_DIR=\"$(abs_srcdir)\" \
+	$(GLIB_CFLAGS) \
+	-I$(top_srcdir) \
+	-I$(top_srcdir)/lib/vfs \
+	@CHECK_CFLAGS@
 
 AM_LDFLAGS = @TESTS_LDFLAGS@
 
@@ -19,13 +23,16 @@ TESTS = \
 	relative_cd \
 	tempdir \
 	vfs_parse_ls_lga \
+	vfs_path_from_str_flags \
 	vfs_path_string_convert \
 	vfs_prefix_to_class \
+	vfs_setup_cwd \
 	vfs_split \
 	vfs_s_get_path
 
 if CHARSET
-TESTS += path_recode
+TESTS += path_recode \
+	vfs_get_encoding
 endif
 
 check_PROGRAMS = $(TESTS)
@@ -57,6 +64,12 @@ relative_cd_SOURCES = \
 tempdir_SOURCES = \
 	tempdir.c
 
+vfs_get_encoding_SOURCES = \
+	vfs_get_encoding.c
+
+vfs_setup_cwd_SOURCES = \
+	vfs_setup_cwd.c
+
 vfs_split_SOURCES = \
 	vfs_split.c
 
@@ -65,6 +78,9 @@ vfs_parse_ls_lga_SOURCES = \
 
 vfs_prefix_to_class_SOURCES = \
 	vfs_prefix_to_class.c
+
+vfs_path_from_str_flags_SOURCES = \
+	vfs_path_from_str_flags.c
 
 vfs_path_string_convert_SOURCES = \
 	vfs_path_string_convert.c

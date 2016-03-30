@@ -18,7 +18,7 @@ enum subshell_state_enum
     RUNNING_COMMAND
 };
 
-/* For the `how' argument to various functions */
+/* For the 'how' argument to various functions */
 enum
 {
     QUIETLY,
@@ -32,7 +32,7 @@ enum
 extern enum subshell_state_enum subshell_state;
 
 /* Holds the latest prompt captured from the subshell */
-extern char *subshell_prompt;
+extern GString *subshell_prompt;
 
 extern gboolean update_subshell_prompt;
 
@@ -40,10 +40,10 @@ extern gboolean update_subshell_prompt;
 
 void init_subshell (void);
 int invoke_subshell (const char *command, int how, vfs_path_t ** new_dir);
-int read_subshell_prompt (void);
+gboolean read_subshell_prompt (void);
 void do_update_prompt (void);
 gboolean exit_subshell (void);
-void do_subshell_chdir (const vfs_path_t * vpath, gboolean update_prompt, gboolean reset_prompt);
+void do_subshell_chdir (const vfs_path_t * vpath, gboolean update_prompt);
 void subshell_get_console_attributes (void);
 void sigchld_handler (int sig);
 

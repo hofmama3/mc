@@ -29,9 +29,9 @@
 /* Pathname canonicalization */
 typedef enum
 {
-    CANON_PATH_JOINSLASHES = 1L << 0,   /* Multiple `/'s are collapsed to a single `/'. */
-    CANON_PATH_REMSLASHDOTS = 1L << 1,  /* Leading `./'s, `/'s and trailing `/.'s are removed. */
-    CANON_PATH_REMDOUBLEDOTS = 1L << 3, /* Non-leading `../'s and trailing `..'s are handled by removing */
+    CANON_PATH_JOINSLASHES = 1L << 0,   /* Multiple '/'s are collapsed to a single '/'. */
+    CANON_PATH_REMSLASHDOTS = 1L << 1,  /* Leading './'s, '/'s and trailing '/.'s are removed. */
+    CANON_PATH_REMDOUBLEDOTS = 1L << 3, /* Non-leading '../'s and trailing '..'s are handled by removing */
     CANON_PATH_GUARDUNC = 1L << 4,      /* Detect and preserve UNC paths: //server/... */
     CANON_PATH_ALL = CANON_PATH_JOINSLASHES
         | CANON_PATH_REMSLASHDOTS | CANON_PATH_REMDOUBLEDOTS | CANON_PATH_GUARDUNC
@@ -69,7 +69,7 @@ typedef struct
         unsigned int stale_link:1;      /* If this is a symlink and points to Charon's land */
         unsigned int dir_size_computed:1;       /* Size of directory was computed with dirsizes_cmd */
     } f;
-} file_entry;
+} file_entry_t;
 
 /*** global variables defined in .c file *********************************************************/
 
@@ -149,6 +149,11 @@ int close_error_pipe (int error, const char *text);
 
 /* Process spawning */
 int my_system (int flags, const char *shell, const char *command);
+int my_systeml (int flags, const char *shell, ...);
+int my_systemv (const char *command, char *const argv[]);
+int my_systemv_flags (int flags, const char *command, char *const argv[]);
+
+void my_exit (int status);
 void save_stop_handler (void);
 
 /* Tilde expansion */
@@ -163,7 +168,7 @@ void canonicalize_pathname (char *);
 char *mc_realpath (const char *path, char *resolved_path);
 #endif
 
-/* Looks for ``magic'' bytes at the start of the VFS file to guess the
+/* Looks for "magic" bytes at the start of the VFS file to guess the
  * compression type. Side effect: modifies the file position. */
 enum compression_type get_compression_type (int fd, const char *);
 const char *decompress_extension (int type);

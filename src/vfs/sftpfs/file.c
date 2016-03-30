@@ -133,6 +133,7 @@ sftpfs_open_file (vfs_file_handler_t * file_handler, int flags, mode_t mode, GEr
         {
             sftpfs_ssherror_to_gliberror (super_data, libssh_errno, error);
             g_free (name);
+            g_free (file_handler_data);
             return FALSE;
         }
     }
@@ -160,7 +161,7 @@ sftpfs_open_file (vfs_file_handler_t * file_handler, int flags, mode_t mode, GEr
  * @param data  file data handler
  * @param buf   buffer for store stat-info
  * @param error pointer to the error handler
- * @return 0 if sucess, negative value otherwise
+ * @return 0 if success, negative value otherwise
  */
 
 int
@@ -225,7 +226,7 @@ sftpfs_fstat (void *data, struct stat *buf, GError ** error)
  * @param count data size
  * @param error pointer to the error handler
  *
- * @return 0 on sucess, negative value otherwise
+ * @return 0 on success, negative value otherwise
  */
 
 ssize_t
@@ -277,7 +278,7 @@ sftpfs_read_file (vfs_file_handler_t * file_handler, char *buffer, size_t count,
  * @param count        data size
  * @param error        pointer to the error handler
  *
- * @return 0 on sucess, negative value otherwise
+ * @return 0 on success, negative value otherwise
  */
 
 ssize_t
@@ -322,7 +323,7 @@ sftpfs_write_file (vfs_file_handler_t * file_handler, const char *buffer, size_t
  * @param file_handler    file data handler
  * @param error           pointer to the error handler
  *
- * @return 0 on sucess, negative value otherwise
+ * @return 0 on success, negative value otherwise
  */
 
 int
@@ -352,7 +353,7 @@ sftpfs_close_file (vfs_file_handler_t * file_handler, GError ** error)
  * @param whence         method of seek (at begin, at current, at end)
  * @param error          pointer to the error handler
  *
- * @return 0 on sucess, negative value otherwise
+ * @return 0 on success, negative value otherwise
  */
 
 off_t

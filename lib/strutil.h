@@ -4,6 +4,7 @@
 #include "lib/global.h"         /* include glib.h */
 
 #include <sys/types.h>
+#include <inttypes.h>
 #include <string.h>
 #ifdef HAVE_ASSERT_H
 #include <assert.h>             /* assert() */
@@ -86,6 +87,20 @@ typedef enum
     J_CENTER_LEFT_FIT = 0x14
 } align_crt_t;
 
+/* string-to-integer parsing results
+ */
+typedef enum
+{
+    LONGINT_OK = 0,
+
+    /* These two values can be ORed together, to indicate that both errors occurred. */
+    LONGINT_OVERFLOW = 1,
+    LONGINT_INVALID_SUFFIX_CHAR = 2,
+
+    LONGINT_INVALID_SUFFIX_CHAR_WITH_OVERFLOW = (LONGINT_INVALID_SUFFIX_CHAR | LONGINT_OVERFLOW),
+    LONGINT_INVALID = 4
+} strtol_error_t;
+
 /*** structures declarations (and typedefs of structures)*****************************************/
 
 /* all functions in str_class must be defined for every encoding */
@@ -102,17 +117,17 @@ struct str_class
       /*I*/ void (*cprev_char_safe) (const char **);
       /*I*/ int (*cnext_noncomb_char) (const char **text);
       /*I*/ int (*cprev_noncomb_char) (const char **text, const char *begin);
-      /*I*/ int (*isspace) (const char *);
-      /*I*/ int (*ispunct) (const char *);
-      /*I*/ int (*isalnum) (const char *);
-      /*I*/ int (*isdigit) (const char *);
-      /*I*/ int (*isprint) (const char *);
-      /*I*/ int (*iscombiningmark) (const char *);
+      /*I*/ int (*char_isspace) (const char *);
+      /*I*/ int (*char_ispunct) (const char *);
+      /*I*/ int (*char_isalnum) (const char *);
+      /*I*/ int (*char_isdigit) (const char *);
+      /*I*/ int (*char_isprint) (const char *);
+      /*I*/ gboolean (*char_iscombiningmark) (const char *);
       /*I*/ int (*length) (const char *);
       /*I*/ int (*length2) (const char *, int);
       /*I*/ int (*length_noncomb) (const char *);
-      /*I*/ int (*toupper) (const char *, char **, size_t *);
-    int (*tolower) (const char *, char **, size_t *);
+      /*I*/ int (*char_toupper) (const char *, char **, size_t *);
+    int (*char_tolower) (const char *, char **, size_t *);
     void (*fix_string) (char *);
       /*I*/ const char *(*term_form) (const char *);
       /*I*/ const char *(*fit_to_term) (const char *, int, align_crt_t);
@@ -200,7 +215,7 @@ estr_t str_vfs_convert_from (GIConv, const char *, GString *);
  */
 estr_t str_vfs_convert_to (GIConv, const char *, int, GString *);
 
-/* printf functin for str_buffer, append result of printf at the end of buffer
+/* printf function for str_buffer, append result of printf at the end of buffer
  */
 void str_printf (GString *, const char *, ...);
 
@@ -334,7 +349,7 @@ int str_isprint (const char *ch);
  * combining makrs are assumed to be zero width 
  * I
  */
-int str_iscombiningmark (const char *ch);
+gboolean str_iscombiningmark (const char *ch);
 
 /* write lower from of fisrt characters in ch into out
  * decrase remain by size of returned characters
@@ -478,8 +493,8 @@ int str_casecmp (const char *t1, const char *t2);
 int str_ncasecmp (const char *t1, const char *t2);
 
 /* return, how many bytes are are same from start in text and prefix
- * both strings are decomposed befor comapring and return value is counted
- * in decomposed form, too. caling with prefix, prefix, you get size in bytes
+ * both strings are decomposed before comparing and return value is counted
+ * in decomposed form, too. calling with prefix, prefix, you get size in bytes
  * of prefix in decomposed form,
  * I
  */
@@ -538,7 +553,15 @@ void str_msg_term_size (const char *text, int *lines, int *columns);
 
 char *strrstr_skip_count (const char *haystack, const char *needle, size_t skip_count);
 
+char *str_replace_all (const char *haystack, const char *needle, const char *replacement);
+
+strtol_error_t xstrtoumax (const char *s, char **ptr, int base, uintmax_t * val,
+                           const char *valid_suffixes);
+uintmax_t parse_integer (const char *str, gboolean * invalid);
+
+/* --------------------------------------------------------------------------------------------- */
 /*** inline functions ****************************************************************************/
+/* --------------------------------------------------------------------------------------------- */
 
 static inline void
 str_replace (char *s, char from, char to)
@@ -550,6 +573,7 @@ str_replace (char *s, char from, char to)
     }
 }
 
+/* --------------------------------------------------------------------------------------------- */
 /*
  * strcpy is unsafe on overlapping memory areas, so define memmove-alike
  * string function.
@@ -581,5 +605,7 @@ str_move (char *dest, const char *src)
 
     return (char *) memmove (dest, src, n);
 }
+
+/* --------------------------------------------------------------------------------------------- */
 
 #endif /* MC_STRUTIL_H */

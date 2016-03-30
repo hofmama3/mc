@@ -33,6 +33,7 @@
 #include <signal.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <string.h>             /* memset() */
 #include <unistd.h>             /* exit() */
 
 #ifdef HAVE_SYS_IOCTL_H
@@ -90,6 +91,7 @@ gboolean
 tty_check_term (gboolean force_xterm)
 {
     const char *termvalue;
+    const char *xdisplay;
 
     termvalue = getenv ("TERM");
     if (termvalue == NULL || *termvalue == '\0')
@@ -98,10 +100,16 @@ tty_check_term (gboolean force_xterm)
         exit (EXIT_FAILURE);
     }
 
+    xdisplay = getenv ("DISPLAY");
+    if (xdisplay != NULL && *xdisplay == '\0')
+        xdisplay = NULL;
+
     return force_xterm || strncmp (termvalue, "xterm", 5) == 0
         || strncmp (termvalue, "konsole", 7) == 0
         || strncmp (termvalue, "rxvt", 4) == 0
-        || strcmp (termvalue, "Eterm") == 0 || strcmp (termvalue, "dtterm") == 0;
+        || strcmp (termvalue, "Eterm") == 0
+        || strcmp (termvalue, "dtterm") == 0
+        || (strncmp (termvalue, "screen", 6) == 0 && xdisplay != NULL);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -111,9 +119,12 @@ tty_start_interrupt_key (void)
 {
     struct sigaction act;
 
+    memset (&act, 0, sizeof (act));
     act.sa_handler = sigintr_handler;
     sigemptyset (&act.sa_mask);
+#ifdef SA_RESTART
     act.sa_flags = SA_RESTART;
+#endif /* SA_RESTART */
     sigaction (SIGINT, &act, NULL);
 }
 
@@ -124,9 +135,9 @@ tty_enable_interrupt_key (void)
 {
     struct sigaction act;
 
+    memset (&act, 0, sizeof (act));
     act.sa_handler = sigintr_handler;
     sigemptyset (&act.sa_mask);
-    act.sa_flags = 0;
     sigaction (SIGINT, &act, NULL);
     got_interrupt = 0;
 }
@@ -138,9 +149,9 @@ tty_disable_interrupt_key (void)
 {
     struct sigaction act;
 
+    memset (&act, 0, sizeof (act));
     act.sa_handler = SIG_IGN;
     sigemptyset (&act.sa_mask);
-    act.sa_flags = 0;
     sigaction (SIGINT, &act, NULL);
 }
 
@@ -303,6 +314,10 @@ tty_init_xterm_support (gboolean is_xterm)
             }
         }
     }
+
+    /* No termcap for SGR extended mouse (yet), hardcode it for now */
+    if (xmouse_seq != NULL)
+        xmouse_extended_seq = ESC_STR "[<";
 }
 
 /* --------------------------------------------------------------------------------------------- */

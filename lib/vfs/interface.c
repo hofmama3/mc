@@ -1,11 +1,11 @@
 /*
    Virtual File System: interface functions
 
-   Copyright (C) 2011
+   Copyright (C) 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
-   Slava Zanko <slavazanko@gmail.com>, 2011
+   Slava Zanko <slavazanko@gmail.com>, 2011, 2013
 
    This file is part of the Midnight Commander.
 
@@ -80,7 +80,7 @@ static vfs_path_t *
 mc_def_getlocalcopy (const vfs_path_t * filename_vpath)
 {
     vfs_path_t *tmp_vpath = NULL;
-    int fdin = -1, fdout = -1;
+    int fdin, fdout = -1;
     ssize_t i;
     char buffer[BUF_1K * 8];
     struct stat mystat;
@@ -320,8 +320,8 @@ int mc_##name (const vfs_path_t *vpath1, const vfs_path_t *vpath2) \
     if (vpath1 == NULL || vpath2 == NULL) \
         return -1; \
 \
-    path_element1 = vfs_path_get_by_index (vpath1, - 1); \
-    path_element2 = vfs_path_get_by_index (vpath2, - 1); \
+    path_element1 = vfs_path_get_by_index (vpath1, (-1)); \
+    path_element2 = vfs_path_get_by_index (vpath2, (-1)); \
 \
     if (!vfs_path_element_valid (path_element1) || !vfs_path_element_valid (path_element2) || \
         path_element1->class != path_element2->class) \
@@ -457,9 +457,6 @@ mc_readdir (DIR * dirp)
     struct vfs_class *vfs;
     struct dirent *entry = NULL;
     vfs_path_element_t *vfs_path_element;
-#ifdef HAVE_CHARSET
-    estr_t state;
-#endif
 
     if (!mc_readdir_result)
     {
@@ -496,8 +493,7 @@ mc_readdir (DIR * dirp)
 
         g_string_set_size (vfs_str_buffer, 0);
 #ifdef HAVE_CHARSET
-        state =
-            str_vfs_convert_from (vfs_path_element->dir.converter, entry->d_name, vfs_str_buffer);
+        str_vfs_convert_from (vfs_path_element->dir.converter, entry->d_name, vfs_str_buffer);
 #else
         g_string_assign (vfs_str_buffer, entry->d_name);
 #endif
@@ -844,20 +840,20 @@ mc_tmpdir (void)
 
     canonicalize_pathname (buffer);
 
-    if (lstat (buffer, &st) == 0)
+    /* Try to create directory */
+    if (mkdir (buffer, S_IRWXU) != 0)
     {
-        /* Sanity check for existing directory */
-        if (!S_ISDIR (st.st_mode))
-            error = _("%s is not a directory\n");
-        else if (st.st_uid != getuid ())
-            error = _("Directory %s is not owned by you\n");
-        else if (((st.st_mode & 0777) != 0700) && (chmod (buffer, 0700) != 0))
-            error = _("Cannot set correct permissions for directory %s\n");
-    }
-    else
-    {
-        /* Need to create directory */
-        if (mkdir (buffer, S_IRWXU) != 0)
+        if (errno == EEXIST && lstat (buffer, &st) == 0)
+        {
+            /* Sanity check for existing directory */
+            if (!S_ISDIR (st.st_mode))
+                error = _("%s is not a directory\n");
+            else if (st.st_uid != getuid ())
+                error = _("Directory %s is not owned by you\n");
+            else if (((st.st_mode & 0777) != 0700) && (chmod (buffer, 0700) != 0))
+                error = _("Cannot set correct permissions for directory %s\n");
+        }
+        else
         {
             fprintf (stderr,
                      _("Cannot create temporary directory %s: %s\n"),
@@ -882,16 +878,12 @@ mc_tmpdir (void)
         g_free (fallback_prefix);
         if (test_fd != -1)
         {
-            char *test_fn;
-
-            test_fn = vfs_path_to_str (test_vpath);
             close (test_fd);
-            test_fd = open (test_fn, O_RDONLY);
-            g_free (test_fn);
+            test_fd = open (vfs_path_as_str (test_vpath), O_RDONLY);
             if (test_fd != -1)
             {
                 close (test_fd);
-                unlink (test_fn);
+                unlink (vfs_path_as_str (test_vpath));
                 fallback_ok = TRUE;
             }
         }

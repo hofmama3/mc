@@ -2,7 +2,7 @@
    Directory panel listing format editor -- for the Midnight Commander
 
    Copyright (C) 1994, 1995, 1998, 1999, 2000, 2001, 2002, 2003, 2005,
-   2006, 2007, 2011
+   2006, 2007, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
@@ -173,14 +173,14 @@ bremove_cback (int action)
 
 /* --------------------------------------------------------------------------------------------- */
 
-static Dlg_head *
+static WDialog *
 init_listmode (char *oldlistformat)
 {
     int i;
     char *s;
     int format_width = 0;
     int format_columns = 0;
-    Dlg_head *listmode_dlg;
+    WDialog *listmode_dlg;
 
     static struct listmode_label listmode_labels[] = {
         {UY + 13, UX + 22, "Item width:"}
@@ -198,7 +198,7 @@ init_listmode (char *oldlistformat)
     do_refresh ();
 
     listmode_dlg =
-        create_dlg (TRUE, 0, 0, 22, 74, dialog_colors, NULL, NULL, listmode_section,
+        dlg_create (TRUE, 0, 0, 22, 74, dialog_colors, NULL, NULL, listmode_section,
                     "Listing format edit", DLG_CENTER | DLG_REVERSE);
 
     add_widget (listmode_dlg, groupbox_new (UY, UX, 4, 63, "General options"));
@@ -271,9 +271,9 @@ init_listmode (char *oldlistformat)
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-listmode_done (Dlg_head * h)
+listmode_done (WDialog * h)
 {
-    destroy_dlg (h);
+    dlg_destroy (h);
     if (0)
         update_panels (UP_OPTIMIZE, UP_KEEPSEL);
     repaint_screen ();
@@ -321,13 +321,13 @@ listmode_edit (char *oldlistformat)
 {
     char *newformat = NULL;
     char *s;
-    Dlg_head *listmode_dlg;
+    WDialog *listmode_dlg;
 
     s = g_strdup (oldlistformat);
     listmode_dlg = init_listmode (s);
     g_free (s);
 
-    if (run_dlg (listmode_dlg) == B_ENTER)
+    if (dlg_run (listmode_dlg) == B_ENTER)
     {
         newformat = collect_new_format ();
     }

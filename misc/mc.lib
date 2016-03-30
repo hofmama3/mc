@@ -1,3 +1,14 @@
+[External editor or viewer parameters]
+vi=+%lineno %filename
+vim=+%lineno %filename
+view=+%lineno %filename
+emacs=+%lineno %filename
+nano=+%lineno %filename
+joe=+%lineno %filename
+more=+%lineno %filename
+less=+%lineno %filename
+mcedit=%filename:%lineno
+
 [Special dirs]
 list=/afs;/coda;/:;/...;/net;/#smb
 
@@ -118,6 +129,9 @@ copy=xterm
 copy=xterm
 
 [terminal:xterm-256color]
+copy=xterm
+
+[terminal:screen]
 copy=xterm
 
 [terminal:ibmpc3]

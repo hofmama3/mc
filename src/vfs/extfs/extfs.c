@@ -2,13 +2,14 @@
    Virtual File System: External file system.
 
    Copyright (C) 1995, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2006, 2007, 2009, 2011
+   2006, 2007, 2009, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
    Jakub Jelinek, 1995
    Pavel Machek, 1998
    Andrew T. Veliath, 1999
+   Slava Zanko <slavazanko@gmail.com>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -50,7 +51,6 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
 #include "lib/global.h"
 #include "lib/fileloc.h"
@@ -58,7 +58,6 @@
 #include "lib/util.h"
 #include "lib/widget.h"         /* message() */
 
-#include "src/setup.h"          /* shell */
 #include "src/execute.h"        /* For shell_execute */
 
 #include "lib/vfs/vfs.h"
@@ -266,9 +265,9 @@ extfs_find_entry_int (struct entry *dir, const char *name, GSList * list,
         c = *q;
         *q = '\0';
 
-        if (strcmp (p, ".") != 0)
+        if (!DIR_IS_DOT (p))
         {
-            if (strcmp (p, "..") == 0)
+            if (DIR_IS_DOTDOT (p))
                 pent = pent->dir;
             else
             {
@@ -301,7 +300,7 @@ extfs_find_entry_int (struct entry *dir, const char *name, GSList * list,
                     }
 
                 /* When we load archive, we create automagically
-                 * non-existant directories
+                 * non-existent directories
                  */
                 if (pent == NULL && make_dirs)
                     pent = extfs_generate_entry (dir->inode->archive, p, pdir, S_IFDIR | 0777);
@@ -378,7 +377,7 @@ extfs_free_archive (struct archive *archive)
         vfs_path_t *local_name_vpath, *name_vpath;
 
         local_name_vpath = vfs_path_from_str (archive->local_name);
-        name_vpath = vfs_path_from_str (archive->local_name);
+        name_vpath = vfs_path_from_str (archive->name);
         mc_stat (local_name_vpath, &my);
         mc_ungetlocalcopy (name_vpath, local_name_vpath,
                            archive->local_stat.st_mtime != my.st_mtime);
@@ -450,7 +449,7 @@ extfs_open_archive (int fstype, const char *name, struct archive **pparc)
 
     current_archive = g_new (struct archive, 1);
     current_archive->fstype = fstype;
-    current_archive->name = (name != NULL) ? g_strdup (name) : NULL;
+    current_archive->name = g_strdup (name);
     current_archive->local_name = g_strdup (vfs_path_get_last_path_str (local_name_vpath));
 
     if (local_name_vpath != NULL)
@@ -541,7 +540,7 @@ extfs_read_archive (int fstype, const char *name, struct archive **pparc)
                     *(p++) = '\0';
                     q = cfn;
                 }
-                if (S_ISDIR (hstat.st_mode) && (strcmp (p, ".") == 0 || strcmp (p, "..") == 0))
+                if (S_ISDIR (hstat.st_mode) && (DIR_IS_DOT (p) || DIR_IS_DOTDOT (p)))
                     goto read_extfs_continue;
                 pent = extfs_find_entry (current_archive->root_entry, q, TRUE, FALSE);
                 if (pent == NULL)
@@ -691,21 +690,21 @@ extfs_get_path_int (const vfs_path_t * vpath, struct archive **archive, gboolean
             if (strcmp (parc->name, archive_name) == 0)
             {
                 vfs_stamp (&vfs_extfs_ops, (vfsid) parc);
+                g_free (archive_name);
                 goto return_success;
             }
         }
 
     result = do_not_open ? -1 : extfs_read_archive (fstype, archive_name, &parc);
+    g_free (archive_name);
     if (result == -1)
     {
         path_element->class->verrno = EIO;
-        g_free (archive_name);
         return NULL;
     }
 
   return_success:
     *archive = parc;
-    g_free (archive_name);
     return path_element->path;
 }
 
@@ -851,7 +850,7 @@ extfs_cmd (const char *str_extfs_cmd, struct archive *archive,
     g_free (quoted_archive_name);
 
     open_error_pipe ();
-    retval = my_system (EXECUTE_AS_SHELL, shell, cmd);
+    retval = my_system (EXECUTE_AS_SHELL, mc_global.tty.shell, cmd);
     g_free (cmd);
     close_error_pipe (D_ERROR, NULL);
     return retval;

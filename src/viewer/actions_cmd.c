@@ -3,7 +3,7 @@
    Callback function for some actions (hotkeys, menu)
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2011
+   2004, 2005, 2006, 2007, 2009, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
@@ -14,8 +14,8 @@
    Norbert Warmuth, 1997
    Pavel Machek, 1998
    Roland Illig <roland.illig@gmx.de>, 2004, 2005
-   Slava Zanko <slavazanko@google.com>, 2009
-   Andrew Borodin <aborodin@vmail.ru>, 2009
+   Slava Zanko <slavazanko@google.com>, 2009, 2013
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2013
    Ilia Maslakov <il.smind@gmail.com>, 2009
 
    This file is part of the Midnight Commander.
@@ -63,13 +63,13 @@
 #include "src/filemanager/layout.h"
 #include "src/filemanager/cmd.h"
 #include "src/filemanager/midnight.h"   /* current_panel */
+#include "src/filemanager/ext.h"        /* regex_command_for() */
 
 #include "src/history.h"
 #include "src/execute.h"
 #include "src/keybind-defaults.h"
 
 #include "internal.h"
-#include "mcviewer.h"
 
 /*** global variables ****************************************************************************/
 
@@ -79,15 +79,51 @@
 
 /*** file scope variables ************************************************************************/
 
+/* --------------------------------------------------------------------------------------------- */
 /*** file scope functions ************************************************************************/
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+mcview_remove_ext_script (mcview_t * view)
+{
+    if (view->ext_script != NULL)
+    {
+        mc_unlink (view->ext_script);
+        vfs_path_free (view->ext_script);
+        view->ext_script = NULL;
+    }
+}
+
 /* --------------------------------------------------------------------------------------------- */
 
 /* Both views */
 static void
-mcview_search (mcview_t * view)
+mcview_search (mcview_t * view, gboolean start_search)
 {
-    if (mcview_dialog_search (view))
+    if (start_search)
+    {
+        if (mcview_dialog_search (view))
+        {
+            if (view->hex_mode)
+                view->search_start = view->hex_cursor;
+
+            mcview_do_search (view);
+        }
+    }
+    else
+    {
+        if (view->hex_mode)
+        {
+            if (!mcview_search_options.backwards)
+                view->search_start = view->hex_cursor + 1;
+            else if (view->hex_cursor > 0)
+                view->search_start = view->hex_cursor - 1;
+            else
+                view->search_start = 0;
+        }
+
         mcview_do_search (view);
+    }
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -96,41 +132,45 @@ static void
 mcview_continue_search_cmd (mcview_t * view)
 {
     if (view->last_search_string != NULL)
-    {
-        mcview_do_search (view);
-    }
+        mcview_search (view, FALSE);
     else
     {
         /* find last search string in history */
         GList *history;
+
         history = history_get (MC_HISTORY_SHARED_SEARCH);
         if (history != NULL && history->data != NULL)
         {
             view->last_search_string = (gchar *) g_strdup (history->data);
             history = g_list_first (history);
-            g_list_foreach (history, (GFunc) g_free, NULL);
-            g_list_free (history);
+            g_list_free_full (history, g_free);
 
-            view->search = mc_search_new (view->last_search_string, -1);
+#ifdef HAVE_CHARSET
+            view->search = mc_search_new (view->last_search_string, -1, cp_source);
+#else
+            view->search = mc_search_new (view->last_search_string, -1, NULL);
+#endif
             view->search_nroff_seq = mcview_nroff_seq_new (view);
 
-            if (!view->search)
+            if (view->search == NULL)
             {
                 /* if not... then ask for an expression */
                 g_free (view->last_search_string);
                 view->last_search_string = NULL;
-                mcview_search (view);
+                mcview_search (view, TRUE);
             }
             else
             {
                 view->search->search_type = mcview_search_options.type;
+#ifdef HAVE_CHARSET
                 view->search->is_all_charsets = mcview_search_options.all_codepages;
+#endif
                 view->search->is_case_sensitive = mcview_search_options.case_sens;
                 view->search->whole_words = mcview_search_options.whole_words;
                 view->search->search_fn = mcview_search_cmd_callback;
                 view->search->update_fn = mcview_search_update_cmd_callback;
 
-                mcview_do_search (view);
+                mcview_search (view, FALSE);
             }
         }
         else
@@ -138,7 +178,7 @@ mcview_continue_search_cmd (mcview_t * view)
             /* if not... then ask for an expression */
             g_free (view->last_search_string);
             view->last_search_string = NULL;
-            mcview_search (view);
+            mcview_search (view, TRUE);
         }
     }
 }
@@ -251,7 +291,6 @@ mcview_load_next_prev_init (mcview_t * view)
     {
         /* get file list from current panel. Update it each time */
         view->dir = &current_panel->dir;
-        view->dir_count = &current_panel->count;
         view->dir_idx = &current_panel->selected;
     }
     else if (view->dir == NULL)
@@ -261,33 +300,28 @@ mcview_load_next_prev_init (mcview_t * view)
 
         /* TODO: check mtime of directory to reload it */
 
-        char *full_fname;
         const char *fname;
         size_t fname_len;
         int i;
+        dir_sort_options_t sort_op = { FALSE, TRUE, FALSE };
 
         /* load directory where requested file is */
         view->dir = g_new0 (dir_list, 1);
-        view->dir_count = g_new (int, 1);
         view->dir_idx = g_new (int, 1);
 
-        *view->dir_count = do_load_dir (view->workdir_vpath, view->dir, (sortfn *) sort_name, FALSE,
-                                        TRUE, FALSE, NULL);
+        dir_list_load (view->dir, view->workdir_vpath, (GCompareFunc) sort_name, &sort_op, NULL);
 
-        full_fname = vfs_path_to_str (view->filename_vpath);
-        fname = x_basename (full_fname);
+        fname = x_basename (vfs_path_as_str (view->filename_vpath));
         fname_len = strlen (fname);
 
         /* search current file in the list */
-        for (i = 0; i != *view->dir_count; i++)
+        for (i = 0; i != view->dir->len; i++)
         {
-            const file_entry *fe = &view->dir->list[i];
+            const file_entry_t *fe = &view->dir->list[i];
 
             if (fname_len == fe->fnamelen && strncmp (fname, fe->fname, fname_len) == 0)
                 break;
         }
-
-        g_free (full_fname);
 
         *view->dir_idx = i;
     }
@@ -303,8 +337,8 @@ mcview_scan_for_file (mcview_t * view, int direction)
     for (i = *view->dir_idx + direction; i != *view->dir_idx; i += direction)
     {
         if (i < 0)
-            i = *view->dir_count - 1;
-        if (i == *view->dir_count)
+            i = view->dir->len - 1;
+        if (i == view->dir->len)
             i = 0;
         if (!S_ISDIR (view->dir->list[i].st.st_mode))
             break;
@@ -319,30 +353,28 @@ static void
 mcview_load_next_prev (mcview_t * view, int direction)
 {
     dir_list *dir;
-    int *dir_count, *dir_idx;
+    int *dir_idx;
     vfs_path_t *vfile;
-    char *file;
+    vfs_path_t *ext_script = NULL;
 
     mcview_load_next_prev_init (view);
     mcview_scan_for_file (view, direction);
 
     /* reinit view */
     dir = view->dir;
-    dir_count = view->dir_count;
     dir_idx = view->dir_idx;
     view->dir = NULL;
-    view->dir_count = NULL;
     view->dir_idx = NULL;
     vfile = vfs_path_append_new (view->workdir_vpath, dir->list[*dir_idx].fname, (char *) NULL);
-    file = vfs_path_to_str (vfile);
-    vfs_path_free (vfile);
     mcview_done (view);
+    mcview_remove_ext_script (view);
     mcview_init (view);
-    mcview_load (view, NULL, file, 0);
-    g_free (file);
+    if (regex_command_for (view, vfile, "View", &ext_script) == 0)
+        mcview_load (view, NULL, vfs_path_as_str (vfile), 0);
+    vfs_path_free (vfile);
     view->dir = dir;
-    view->dir_count = dir_count;
     view->dir_idx = dir_idx;
+    view->ext_script = ext_script;
 
     view->dpy_bbar_dirty = FALSE;       /* FIXME */
     view->dirty++;
@@ -395,15 +427,15 @@ mcview_execute_cmd (mcview_t * view, unsigned long command)
         mcview_hexedit_save_changes (view);
         break;
     case CK_Search:
-        mcview_search (view);
+        mcview_search (view, TRUE);
         break;
     case CK_SearchForward:
         mcview_search_options.backwards = FALSE;
-        mcview_search (view);
+        mcview_search (view, TRUE);
         break;
     case CK_SearchBackward:
         mcview_search_options.backwards = TRUE;
-        mcview_search (view);
+        mcview_search (view, TRUE);
         break;
     case CK_MagicMode:
         mcview_toggle_magic_mode (view);
@@ -551,7 +583,7 @@ mcview_handle_key (mcview_t * view, int key)
 /* --------------------------------------------------------------------------------------------- */
 
 static inline void
-mcview_adjust_size (Dlg_head * h)
+mcview_adjust_size (WDialog * h)
 {
     mcview_t *view;
     WButtonBar *b;
@@ -567,6 +599,44 @@ mcview_adjust_size (Dlg_head * h)
     mcview_update_bytes_per_line (view);
 }
 
+/* --------------------------------------------------------------------------------------------- */
+
+static gboolean
+mcview_ok_to_quit (mcview_t * view)
+{
+    int r;
+
+    if (view->change_list == NULL)
+        return TRUE;
+
+    if (!mc_global.midnight_shutdown)
+    {
+        query_set_sel (2);
+        r = query_dialog (_("Quit"),
+                          _("File was modified. Save with exit?"), D_NORMAL, 3,
+                          _("&Yes"), _("&No"), _("&Cancel quit"));
+    }
+    else
+    {
+        r = query_dialog (_("Quit"),
+                          _("Midnight Commander is being shut down.\nSave modified file?"),
+                          D_NORMAL, 2, _("&Yes"), _("&No"));
+        /* Esc is No */
+        if (r == -1)
+            r = 1;
+    }
+
+    switch (r)
+    {
+    case 0:                    /* Yes */
+        return mcview_hexedit_save_changes (view) || mc_global.midnight_shutdown;
+    case 1:                    /* No */
+        mcview_hexedit_free_change_list (view);
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
 
 /* --------------------------------------------------------------------------------------------- */
 /*** public functions ****************************************************************************/
@@ -583,38 +653,38 @@ mcview_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *
 
     switch (msg)
     {
-    case WIDGET_INIT:
+    case MSG_INIT:
         if (mcview_is_in_panel (view))
             add_hook (&select_file_hook, mcview_hook, view);
         else
             view->dpy_bbar_dirty = TRUE;
         return MSG_HANDLED;
 
-    case WIDGET_DRAW:
+    case MSG_DRAW:
         mcview_display (view);
         return MSG_HANDLED;
 
-    case WIDGET_CURSOR:
+    case MSG_CURSOR:
         if (view->hex_mode)
             mcview_place_cursor (view);
         return MSG_HANDLED;
 
-    case WIDGET_KEY:
+    case MSG_KEY:
         i = mcview_handle_key (view, parm);
         mcview_update (view);
         return i;
 
-    case WIDGET_COMMAND:
+    case MSG_ACTION:
         i = mcview_execute_cmd (view, parm);
         mcview_update (view);
         return i;
 
-    case WIDGET_FOCUS:
+    case MSG_FOCUS:
         view->dpy_bbar_dirty = TRUE;
         mcview_update (view);
         return MSG_HANDLED;
 
-    case WIDGET_DESTROY:
+    case MSG_DESTROY:
         if (mcview_is_in_panel (view))
         {
             delete_hook (&select_file_hook, mcview_hook);
@@ -623,27 +693,29 @@ mcview_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *
                 mcview_ok_to_quit (view);
         }
         mcview_done (view);
+        mcview_remove_ext_script (view);
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
 /* --------------------------------------------------------------------------------------------- */
 
 cb_ret_t
-mcview_dialog_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, void *data)
+mcview_dialog_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
+    WDialog *h = DIALOG (w);
     mcview_t *view;
 
     switch (msg)
     {
-    case DLG_RESIZE:
+    case MSG_RESIZE:
         mcview_adjust_size (h);
         return MSG_HANDLED;
 
-    case DLG_ACTION:
+    case MSG_ACTION:
         /* shortcut */
         if (sender == NULL)
             return mcview_execute_cmd (NULL, parm);
@@ -651,14 +723,14 @@ mcview_dialog_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, 
         if (sender == WIDGET (find_buttonbar (h)))
         {
             if (data != NULL)
-                return send_message (WIDGET (data), NULL, WIDGET_COMMAND, parm, NULL);
+                return send_message (data, NULL, MSG_ACTION, parm, NULL);
 
             view = (mcview_t *) find_widget_type (h, mcview_callback);
             return mcview_execute_cmd (view, parm);
         }
         return MSG_NOT_HANDLED;
 
-    case DLG_VALIDATE:
+    case MSG_VALIDATE:
         view = (mcview_t *) find_widget_type (h, mcview_callback);
         h->state = DLG_ACTIVE;  /* don't stop the dialog before final decision */
         if (mcview_ok_to_quit (view))
@@ -668,7 +740,7 @@ mcview_dialog_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, 
         return MSG_HANDLED;
 
     default:
-        return default_dlg_callback (h, sender, msg, parm, data);
+        return dlg_default_callback (w, sender, msg, parm, data);
     }
 }
 

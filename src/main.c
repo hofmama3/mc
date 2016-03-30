@@ -47,6 +47,7 @@
 #include "lib/event.h"
 #include "lib/tty/tty.h"
 #include "lib/tty/key.h"        /* For init_key() */
+#include "lib/tty/mouse.h"      /* init_mouse() */
 #include "lib/skin.h"
 #include "lib/filehighlight.h"
 #include "lib/fileloc.h"
@@ -129,17 +130,18 @@ OS_Setup (void)
     if ((shell_env == NULL) || (shell_env[0] == '\0'))
     {
         struct passwd *pwd;
+
         pwd = getpwuid (geteuid ());
         if (pwd != NULL)
-            shell = g_strdup (pwd->pw_shell);
+            mc_global.tty.shell = g_strdup (pwd->pw_shell);
     }
     else
-        shell = g_strdup (shell_env);
+        mc_global.tty.shell = g_strdup (shell_env);
 
-    if ((shell == NULL) || (shell[0] == '\0'))
+    if ((mc_global.tty.shell == NULL) || (mc_global.tty.shell[0] == '\0'))
     {
-        g_free (shell);
-        shell = g_strdup ("/bin/sh");
+        g_free (mc_global.tty.shell);
+        mc_global.tty.shell = g_strdup ("/bin/sh");
     }
 
     /* This is the directory, where MC was installed, on Unix this is DATADIR */
@@ -151,9 +153,6 @@ OS_Setup (void)
         mc_global.sysconfig_dir = g_strdup (SYSCONFDIR);
 
     mc_global.share_data_dir = g_strdup (DATADIR);
-
-    /* Set up temporary directory */
-    mc_tmpdir ();
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -204,6 +203,7 @@ init_sigchld (void)
 {
     struct sigaction sigchld_action;
 
+    memset (&sigchld_action, 0, sizeof (sigchld_action));
     sigchld_action.sa_handler =
 #ifdef ENABLE_SUBSHELL
         mc_global.tty.use_subshell ? sigchld_handler :
@@ -214,8 +214,6 @@ init_sigchld (void)
 
 #ifdef SA_RESTART
     sigchld_action.sa_flags = SA_RESTART;
-#else
-    sigchld_action.sa_flags = 0;
 #endif /* !SA_RESTART */
 
     if (sigaction (SIGCHLD, &sigchld_action, NULL) == -1)
@@ -257,7 +255,7 @@ main (int argc, char *argv[])
       startup_exit_falure:
         fprintf (stderr, _("Failed to run:\n%s\n"), error->message);
         g_error_free (error);
-        g_free (shell);
+        g_free (mc_global.tty.shell);
       startup_exit_ok:
         str_uninit_strings ();
         return exit_code;
@@ -294,7 +292,9 @@ main (int argc, char *argv[])
 
     vfs_init ();
     vfs_plugins_init ();
-    vfs_setup_work_dir ();
+
+    /* Set up temporary directory after VFS initialization */
+    mc_tmpdir ();
 
     /* do this after vfs initialization due to mc_setctl() call in mc_setup_by_args() */
     if (!mc_setup_by_args (argc, argv, &error))
@@ -339,6 +339,23 @@ main (int argc, char *argv[])
 
     load_setup ();
 
+    /* Must be done after load_setup because depends on mc_global.vfs.cd_symlinks */
+    vfs_setup_work_dir ();
+
+    /* Resolve the other_dir panel option. Must be done after vfs_setup_work_dir */
+    {
+        char *buffer;
+        vfs_path_t *vpath;
+
+        buffer = mc_config_get_string (mc_panels_config, "Dirs", "other_dir", ".");
+        vpath = vfs_path_from_str (buffer);
+        if (vfs_file_is_local (vpath))
+            saved_other_dir = buffer;
+        else
+            g_free (buffer);
+        vfs_path_free (vpath);
+    }
+
     /* start check mc_global.display_codepage and mc_global.source_codepage */
     check_codeset ();
 
@@ -366,7 +383,6 @@ main (int argc, char *argv[])
     /* inherit the file descriptors opened below, etc */
     if (mc_global.tty.use_subshell)
         init_subshell ();
-
 #endif /* ENABLE_SUBSHELL */
 
     /* Also done after init_subshell, to save any shell init file messages */
@@ -376,16 +392,16 @@ main (int argc, char *argv[])
     if (mc_global.tty.alternate_plus_minus)
         application_keypad_mode ();
 
-#ifdef ENABLE_SUBSHELL
-    if (mc_global.tty.use_subshell)
-    {
-        mc_prompt = strip_ctrl_codes (subshell_prompt);
-        if (mc_prompt == NULL)
-            mc_prompt = (geteuid () == 0) ? "# " : "$ ";
-    }
-    else
-#endif /* ENABLE_SUBSHELL */
-        mc_prompt = (geteuid () == 0) ? "# " : "$ ";
+    /* Done after subshell initialization to allow select and paste text by mouse
+       w/o Shift button in subshell in the native console */
+    init_mouse ();
+
+    /* Done after do_enter_ca_mode (tty_init) because in VTE bracketed mode is
+       separate for the normal and alternate screens */
+    enable_bracketed_paste ();
+
+    /* subshell_prompt is NULL here */
+    mc_prompt = (geteuid () == 0) ? "# " : "$ ";
 
     if (config_migrated)
     {
@@ -439,20 +455,23 @@ main (int argc, char *argv[])
             int ret2;
             ret1 = write (last_wd_fd, last_wd_string, strlen (last_wd_string));
             ret2 = close (last_wd_fd);
+            (void) ret1;
+            (void) ret2;
         }
     }
     g_free (last_wd_string);
 
-    g_free (shell);
+    g_free (mc_global.tty.shell);
 
     done_key ();
 
     if (macros_list != NULL)
     {
         guint i;
-        macros_t *macros;
         for (i = 0; i < macros_list->len; i++)
         {
+            macros_t *macros;
+
             macros = &g_array_index (macros_list, struct macros_t, i);
             if (macros != NULL && macros->macro != NULL)
                 (void) g_array_free (macros->macro, FALSE);
@@ -465,11 +484,10 @@ main (int argc, char *argv[])
     if (mc_global.mc_run_mode != MC_RUN_EDITOR)
         g_free (mc_run_param0);
     else
-    {
-        g_list_foreach ((GList *) mc_run_param0, (GFunc) mcedit_arg_free, NULL);
-        g_list_free ((GList *) mc_run_param0);
-    }
+        g_list_free_full ((GList *) mc_run_param0, (GDestroyNotify) mcedit_arg_free);
+
     g_free (mc_run_param1);
+    g_free (saved_other_dir);
 
     mc_config_deinit_config_paths ();
 

@@ -2,7 +2,7 @@
    Various utilities
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2007, 2009, 2011
+   2004, 2005, 2007, 2009, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
@@ -11,9 +11,7 @@
    Dugan Porter, 1994, 1995, 1996
    Jakub Jelinek, 1994, 1995, 1996
    Mauricio Plaza, 1994, 1995, 1996
-
-   The file_date routine is mostly from GNU's fileutils package,
-   written by Richard Stallman and David MacKenzie.
+   Slava Zanko <slavazanko@gmail.com>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -119,7 +117,7 @@ resolve_symlinks (const vfs_path_t * vpath)
     if (vpath->relative)
         return NULL;
 
-    p = p2 = vfs_path_to_str (vpath);
+    p = p2 = g_strdup (vfs_path_as_str (vpath));
     r = buf = g_malloc (MC_MAXPATHLEN);
     buf2 = g_malloc (MC_MAXPATHLEN);
     *r++ = PATH_SEP;
@@ -209,8 +207,12 @@ mc_util_write_backup_content (const char *from_file_name, const char *to_file_na
         ret1 = FALSE;
     {
         int ret2;
+
+        /* cppcheck-suppress redundantAssignment */
         ret2 = fflush (backup_fd);
+        /* cppcheck-suppress redundantAssignment */
         ret2 = fclose (backup_fd);
+        (void) ret2;
     }
     g_free (contents);
     return ret1;
@@ -427,7 +429,7 @@ size_trunc_len (char *buffer, unsigned int len, uintmax_t size, int units, gbool
         10000000ULL,
         100000000ULL,
         1000000000ULL
-    /* maximmum value of uintmax_t (in case of 4 bytes) is
+    /* maximum value of uintmax_t (in case of 4 bytes) is
         4294967295
      */
 #if SIZEOF_UINTMAX_T == 8
@@ -442,7 +444,7 @@ size_trunc_len (char *buffer, unsigned int len, uintmax_t size, int units, gbool
         100000000000000000ULL,
         1000000000000000000ULL,
         10000000000000000000ULL
-    /* maximmum value of uintmax_t (in case of 8 bytes) is
+    /* maximum value of uintmax_t (in case of 8 bytes) is
         18447644073710439615
      */
 #endif
@@ -450,6 +452,8 @@ size_trunc_len (char *buffer, unsigned int len, uintmax_t size, int units, gbool
     /* *INDENT-ON* */
     static const char *const suffix[] = { "", "K", "M", "G", "T", "P", "E", "Z", "Y", NULL };
     static const char *const suffix_lc[] = { "", "k", "m", "g", "t", "p", "e", "z", "y", NULL };
+
+    const char *const *sfx = use_si ? suffix_lc : suffix;
     int j = 0;
 
     if (len == 0)
@@ -467,7 +471,7 @@ size_trunc_len (char *buffer, unsigned int len, uintmax_t size, int units, gbool
     /*
      * recalculate from 1024 base to 1000 base if units>0
      * We can't just multiply by 1024 - that might cause overflow
-     * if off_t type is too small
+     * if uintmax_t type is too small
      */
     if (use_si)
         for (j = 0; j < units; j++)
@@ -475,31 +479,31 @@ size_trunc_len (char *buffer, unsigned int len, uintmax_t size, int units, gbool
             uintmax_t size_remain;
 
             size_remain = ((size % 125) * 1024) / 1000; /* size mod 125, recalculated */
-            size = size / 125;  /* 128/125 = 1024/1000 */
-            size = size * 128;  /* This will convert size from multiple of 1024 to multiple of 1000 */
+            size /= 125;        /* 128/125 = 1024/1000 */
+            size *= 128;        /* This will convert size from multiple of 1024 to multiple of 1000 */
             size += size_remain;        /* Re-add remainder lost by division/multiplication */
         }
 
-    for (j = units; suffix[j] != NULL; j++)
+    for (j = units; sfx[j] != NULL; j++)
     {
         if (size == 0)
         {
             if (j == units)
             {
                 /* Empty files will print "0" even with minimal width.  */
-                g_snprintf (buffer, len + 1, "0");
-                break;
+                g_snprintf (buffer, len + 1, "%s", "0");
             }
-
-            /* Use "~K" or just "K" if len is 1.  Use "B" for bytes.  */
-            g_snprintf (buffer, len + 1, (len > 1) ? "~%s" : "%s",
-                        (j > 1) ? (use_si ? suffix_lc[j - 1] : suffix[j - 1]) : "B");
+            else
+            {
+                /* Use "~K" or just "K" if len is 1.  Use "B" for bytes.  */
+                g_snprintf (buffer, len + 1, (len > 1) ? "~%s" : "%s", (j > 1) ? sfx[j - 1] : "B");
+            }
             break;
         }
 
         if (size < power10[len - (j > 0 ? 1 : 0)])
         {
-            g_snprintf (buffer, len + 1, "%" PRIuMAX "%s", size, use_si ? suffix_lc[j] : suffix[j]);
+            g_snprintf (buffer, len + 1, "%" PRIuMAX "%s", size, sfx[j]);
             break;
         }
 
@@ -728,12 +732,11 @@ strip_ctrl_codes (char *s)
 {
     char *w;                    /* Current position where the stripped data is written */
     char *r;                    /* Current position where the original data is read */
-    char *n;
 
-    if (!s)
-        return 0;
+    if (s == NULL)
+        return NULL;
 
-    for (w = s, r = s; *r;)
+    for (w = s, r = s; *r != '\0';)
     {
         if (*r == ESC_CHAR)
         {
@@ -742,7 +745,8 @@ strip_ctrl_codes (char *s)
             if (*(++r) == '[' || *r == '(')
             {
                 /* strchr() matches trailing binary 0 */
-                while (*(++r) && strchr ("0123456789;?", *r));
+                while (*(++r) != '\0' && strchr ("0123456789;?", *r) != NULL)
+                    ;
             }
             else if (*r == ']')
             {
@@ -754,7 +758,7 @@ strip_ctrl_codes (char *s)
                  */
                 char *new_r = r;
 
-                for (; *new_r; ++new_r)
+                for (; *new_r != '\0'; ++new_r)
                 {
                     switch (*new_r)
                     {
@@ -771,27 +775,32 @@ strip_ctrl_codes (char *s)
                         }
                     }
                 }
-              osc_out:;
+              osc_out:
+                ;
             }
 
             /*
              * Now we are at the last character of the sequence.
              * Skip it unless it's binary 0.
              */
-            if (*r)
+            if (*r != '\0')
                 r++;
-            continue;
         }
-
-        n = str_get_next_char (r);
-        if (str_isprint (r))
+        else
         {
-            memmove (w, r, n - r);
-            w += n - r;
+            char *n;
+
+            n = str_get_next_char (r);
+            if (str_isprint (r))
+            {
+                memmove (w, r, n - r);
+                w += n - r;
+            }
+            r = n;
         }
-        r = n;
     }
-    *w = 0;
+
+    *w = '\0';
     return s;
 }
 
@@ -867,7 +876,7 @@ get_compression_type (int fd, const char *name)
         return COMPRESSION_XZ;
 
     str_len = strlen (name);
-    /* HACK: we must belive to extention of LZMA file :) ... */
+    /* HACK: we must belive to extension of LZMA file :) ... */
     if ((str_len > 5 && strcmp (&name[str_len - 5], ".lzma") == 0) ||
         (str_len > 4 && strcmp (&name[str_len - 4], ".tlz") == 0))
         return COMPRESSION_LZMA;
@@ -1066,6 +1075,7 @@ list_append_unique (GList * list, char *text)
 
             g_free (lc_link->data);
             tmp = g_list_remove_link (list, lc_link);
+            (void) tmp;
             g_list_free_1 (lc_link);
         }
         lc_link = newlink;
@@ -1088,7 +1098,6 @@ load_file_position (const vfs_path_t * filename_vpath, long *line, long *column,
     FILE *f;
     char buf[MC_MAXPATHLEN + 100];
     const size_t len = vfs_path_len (filename_vpath);
-    char *filename;
 
     /* defaults */
     *line = 1;
@@ -1103,8 +1112,8 @@ load_file_position (const vfs_path_t * filename_vpath, long *line, long *column,
         return;
 
     /* prepare array for serialized bookmarks */
-    *bookmarks = g_array_sized_new (FALSE, FALSE, sizeof (size_t), MAX_SAVED_BOOKMARKS);
-    filename = vfs_path_to_str (filename_vpath);
+    if (bookmarks != NULL)
+        *bookmarks = g_array_sized_new (FALSE, FALSE, sizeof (size_t), MAX_SAVED_BOOKMARKS);
 
     while (fgets (buf, sizeof (buf), f) != NULL)
     {
@@ -1112,7 +1121,7 @@ load_file_position (const vfs_path_t * filename_vpath, long *line, long *column,
         gchar **pos_tokens;
 
         /* check if the filename matches the beginning of string */
-        if (strncmp (buf, filename, len) != 0)
+        if (strncmp (buf, vfs_path_as_str (filename_vpath), len) != 0)
             continue;
 
         /* followed by single space */
@@ -1144,11 +1153,11 @@ load_file_position (const vfs_path_t * filename_vpath, long *line, long *column,
                 *column = strtol (pos_tokens[1], NULL, 10);
                 if (pos_tokens[2] == NULL)
                     *offset = 0;
-                else
+                else if (bookmarks != NULL)
                 {
                     size_t i;
 
-                    *offset = strtoll (pos_tokens[2], NULL, 10);
+                    *offset = (off_t) g_ascii_strtoll (pos_tokens[2], NULL, 10);
 
                     for (i = 0; i < MAX_SAVED_BOOKMARKS && pos_tokens[3 + i] != NULL; i++)
                     {
@@ -1164,7 +1173,6 @@ load_file_position (const vfs_path_t * filename_vpath, long *line, long *column,
         g_strfreev (pos_tokens);
     }
 
-    g_free (filename);
     fclose (f);
 }
 
@@ -1184,7 +1192,6 @@ save_file_position (const vfs_path_t * filename_vpath, long line, long column, o
     size_t i;
     const size_t len = vfs_path_len (filename_vpath);
     gboolean src_error = FALSE;
-    char *filename;
 
     if (filepos_max_saved_entries == 0)
         filepos_max_saved_entries = mc_config_get_int (mc_main_config, CONFIG_APP_SECTION,
@@ -1209,11 +1216,12 @@ save_file_position (const vfs_path_t * filename_vpath, long line, long column, o
         goto open_source_error;
     }
 
-    filename = vfs_path_to_str (filename_vpath);
     /* put the new record */
     if (line != 1 || column != 0 || bookmarks != NULL)
     {
-        if (fprintf (f, "%s %ld;%ld;%" PRIuMAX, filename, line, column, (uintmax_t) offset) < 0)
+        if (fprintf
+            (f, "%s %ld;%ld;%" PRIuMAX, vfs_path_as_str (filename_vpath), line, column,
+             (uintmax_t) offset) < 0)
             goto write_position_error;
         if (bookmarks != NULL)
             for (i = 0; i < bookmarks->len && i < MAX_SAVED_BOOKMARKS; i++)
@@ -1227,7 +1235,7 @@ save_file_position (const vfs_path_t * filename_vpath, long line, long column, o
     i = 1;
     while (fgets (buf, sizeof (buf), tmp_f) != NULL)
     {
-        if (buf[len] == ' ' && strncmp (buf, filename, len) == 0
+        if (buf[len] == ' ' && strncmp (buf, vfs_path_as_str (filename_vpath), len) == 0
             && strchr (&buf[len + 1], ' ') == NULL)
             continue;
 
@@ -1237,7 +1245,6 @@ save_file_position (const vfs_path_t * filename_vpath, long line, long column, o
     }
 
   write_position_error:
-    g_free (filename);
     fclose (tmp_f);
   open_source_error:
     g_free (tmp_fn);

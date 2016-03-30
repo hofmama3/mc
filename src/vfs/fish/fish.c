@@ -3,14 +3,14 @@
    shell connections.
 
    Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006,
-   2007, 2008, 2009, 2010, 2011
+   2007, 2008, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
    Pavel Machek, 1998
    Michal Svec, 2000
    Andrew Borodin <aborodin@vmail.ru>, 2010
-   Slava Zanko <slavazanko@gmail.com>, 2010
+   Slava Zanko <slavazanko@gmail.com>, 2010, 2013
    Ilia Maslakov <il.smind@gmail.com>, 2010
 
    Derived from ftpfs.c.
@@ -66,6 +66,7 @@
 #include "lib/strescape.h"
 #include "lib/unixcompat.h"
 #include "lib/fileloc.h"
+#include "lib/util.h"           /* my_exit() */
 #include "lib/mcconfig.h"
 
 #include "src/execute.h"        /* pre_exec, post_exec */
@@ -196,6 +197,7 @@ fish_decode_reply (char *s, gboolean was_garbage)
 {
     int code;
 
+    /* cppcheck-suppress invalidscanf */
     if (sscanf (s, "%d", &code) == 0)
     {
         code = 500;
@@ -253,6 +255,7 @@ fish_command (struct vfs_class *me, struct vfs_s_super *super, int wait_reply, c
         size_t ret;
         ret = fwrite (str, strlen (str), 1, logfile);
         ret = fflush (logfile);
+        (void) ret;
     }
 
     tty_enable_interrupt_key ();
@@ -339,7 +342,7 @@ fish_pipeopen (struct vfs_s_super *super, const char *path, const char *argv[])
         close (fileset2[0]);
         close (fileset2[1]);
         execvp (path, const_cast (char **, argv));
-        _exit (3);
+        my_exit (3);
     }
 }
 
@@ -382,12 +385,12 @@ fish_set_env (int flags)
 static gboolean
 fish_info (struct vfs_class *me, struct vfs_s_super *super)
 {
-    char buffer[BUF_8K];
     if (fish_command (me, super, NONE, SUP->scr_info) == COMPLETE)
     {
         while (TRUE)
         {
             int res;
+            char buffer[BUF_8K];
 
             res = vfs_s_get_line_interruptible (me, buffer, sizeof (buffer), SUP->sockr);
             if ((res == 0) || (res == EINTR))
@@ -519,7 +522,7 @@ fish_open_archive_int (struct vfs_class *me, struct vfs_s_super *super)
 
     vfs_print_message (_("fish: Sending initial line..."));
     /*
-     * Run `start_fish_server'. If it doesn't exist - no problem,
+     * Run 'start_fish_server'. If it doesn't exist - no problem,
      * we'll talk directly to the shell.
      */
 
@@ -778,11 +781,7 @@ fish_dir_load (struct vfs_class *me, struct vfs_s_inode *dir, char *remote_path)
                 break;
             }
         case 'S':
-#ifdef HAVE_ATOLL
-            ST.st_size = (off_t) atoll (buffer + 1);
-#else
-            ST.st_size = (off_t) atof (buffer + 1);
-#endif
+            ST.st_size = (off_t) g_ascii_strtoll (buffer + 1, NULL, 10);
             break;
         case 'P':
             {
@@ -811,6 +810,7 @@ fish_dir_load (struct vfs_class *me, struct vfs_s_inode *dir, char *remote_path)
         case 'D':
             {
                 struct tm tim;
+                /* cppcheck-suppress invalidscanf */
                 if (sscanf (buffer + 1, "%d %d %d %d %d %d", &tim.tm_year, &tim.tm_mon,
                             &tim.tm_mday, &tim.tm_hour, &tim.tm_min, &tim.tm_sec) != 6)
                     break;
@@ -820,6 +820,7 @@ fish_dir_load (struct vfs_class *me, struct vfs_s_inode *dir, char *remote_path)
         case 'E':
             {
                 int maj, min;
+                /* cppcheck-suppress invalidscanf */
                 if (sscanf (buffer + 1, "%d,%d", &maj, &min) != 2)
                     break;
 #ifdef HAVE_STRUCT_STAT_ST_RDEV
@@ -872,10 +873,10 @@ fish_file_store (struct vfs_class *me, vfs_file_handler_t * fh, char *name, char
      *
      *     ( head -c number ) | ( cat > file; cat >/dev/null )
      *
-     *  If `head' is not present on the remote system, `dd' will be used.
-     * Unfortunately, we cannot trust most non-GNU `head' implementations
-     * even if `-c' options is supported. Therefore, we separate GNU head
-     * (and other modern heads?) using `-q' and `-' . This causes another
+     *  If 'head' is not present on the remote system, 'dd' will be used.
+     * Unfortunately, we cannot trust most non-GNU 'head' implementations
+     * even if '-c' options is supported. Therefore, we separate GNU head
+     * (and other modern heads?) using '-q' and '-' . This causes another
      * implementations to fail (because of "incorrect options").
      *
      *  Fallback is:
@@ -888,7 +889,7 @@ fish_file_store (struct vfs_class *me, vfs_file_handler_t * fh, char *name, char
      *        rest=`expr $rest - $n`
      *     done
      *
-     *  `dd' was not designed for full filling of input buffers,
+     *  'dd' was not designed for full filling of input buffers,
      *  and does not report exact number of bytes (not blocks).
      *  Therefore a more complex shell script is needed.
      *
@@ -996,9 +997,9 @@ fish_linear_start (struct vfs_class *me, vfs_file_handler_t * fh, off_t offset)
     fish->append = FALSE;
 
     /*
-     * Check whether the remote file is readable by using `dd' to copy 
-     * a single byte from the remote file to /dev/null. If `dd' completes
-     * with exit status of 0 use `cat' to send the file contents to the
+     * Check whether the remote file is readable by using 'dd' to copy 
+     * a single byte from the remote file to /dev/null. If 'dd' completes
+     * with exit status of 0 use 'cat' to send the file contents to the
      * standard output (i.e. over the network).
      */
 
@@ -1016,7 +1017,7 @@ fish_linear_start (struct vfs_class *me, vfs_file_handler_t * fh, off_t offset)
 #if SIZEOF_OFF_T == SIZEOF_LONG
     fish->total = (off_t) strtol (reply_str, NULL, 10);
 #else
-    fish->total = (off_t) strtoll (reply_str, NULL, 10);
+    fish->total = (off_t) g_ascii_strtoll (reply_str, NULL, 10);
 #endif
     if (errno != 0)
         ERRNOR (E_REMOTE, 0);
@@ -1056,13 +1057,12 @@ fish_linear_abort (struct vfs_class *me, vfs_file_handler_t * fh)
 
 /* --------------------------------------------------------------------------------------------- */
 
-static int
+static ssize_t
 fish_linear_read (struct vfs_class *me, vfs_file_handler_t * fh, void *buf, size_t len)
 {
     fish_fh_data_t *fish = (fish_fh_data_t *) fh->data;
     struct vfs_s_super *super = FH_SUPER;
     ssize_t n = 0;
-
 
     len = MIN ((size_t) (fish->total - fish->got), len);
     tty_disable_interrupt_key ();
@@ -1524,7 +1524,7 @@ fish_fh_open (struct vfs_class *me, vfs_file_handler_t * fh, int flags, mode_t m
                 vfs_path_free (vpath);
                 goto fail;
             }
-            fh->ino->localname = vfs_path_to_str (vpath);
+            fh->ino->localname = g_strdup (vfs_path_as_str (vpath));
             vfs_path_free (vpath);
             close (tmp_handle);
         }

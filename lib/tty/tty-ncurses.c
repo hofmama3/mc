@@ -49,6 +49,7 @@
 #include "tty-internal.h"       /* mc_tty_normalize_from_utf8() */
 #include "tty.h"
 #include "color-internal.h"
+#include "key.h"
 #include "mouse.h"
 #include "win.h"
 
@@ -92,11 +93,12 @@ tty_setup_sigwinch (void (*handler) (int))
 {
 #if (NCURSES_VERSION_MAJOR >= 4) && defined (SIGWINCH)
     struct sigaction act, oact;
+
+    memset (&act, 0, sizeof (act));
     act.sa_handler = handler;
     sigemptyset (&act.sa_mask);
-    act.sa_flags = 0;
 #ifdef SA_RESTART
-    act.sa_flags |= SA_RESTART;
+    act.sa_flags = SA_RESTART;
 #endif /* SA_RESTART */
     sigaction (SIGWINCH, &act, &oact);
 #endif /* SIGWINCH */
@@ -203,7 +205,6 @@ tty_init (gboolean mouse_enable, gboolean is_xterm)
     if (!mouse_enable)
         use_mouse_p = MOUSE_DISABLED;
     tty_init_xterm_support (is_xterm);  /* do it before do_enter_ca_mode() call */
-    init_mouse ();
     do_enter_ca_mode ();
     tty_raw_mode ();
     noecho ();
@@ -219,6 +220,7 @@ void
 tty_shutdown (void)
 {
     disable_mouse ();
+    disable_bracketed_paste ();
     tty_reset_shell_mode ();
     tty_noraw_mode ();
     tty_keypad (FALSE);
@@ -526,11 +528,10 @@ tty_print_char (int c)
 void
 tty_print_anychar (int c)
 {
-    unsigned char str[6 + 1];
-
     if (mc_global.utf8_display || c > 255)
     {
         int res;
+        unsigned char str[UTF8_CHAR_LEN + 1];
 
         res = g_unichar_to_utf8 (c, (char *) str);
         if (res == 0)

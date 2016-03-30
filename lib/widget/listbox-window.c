@@ -2,7 +2,7 @@
    Widget based utility functions.
 
    Copyright (C) 1994, 1995, 1998, 1999, 2000, 2001, 2002, 2003, 2004,
-   2005, 2006, 2007, 2008, 2009, 2010, 2011
+   2005, 2006, 2007, 2008, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Authors:
@@ -10,7 +10,7 @@
    Radek Doulik, 1994, 1995
    Jakub Jelinek, 1995
    Andrej Borsenkow, 1995
-   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010, 2013
 
    This file is part of the Midnight Commander.
 
@@ -70,7 +70,7 @@ create_listbox_window_centered (int center_y, int center_x, int lines, int cols,
 
     const int space = 4;
 
-    int xpos, ypos, len;
+    int xpos, ypos;
     Listbox *listbox;
 
     /* Adjust sizes */
@@ -78,6 +78,8 @@ create_listbox_window_centered (int center_y, int center_x, int lines, int cols,
 
     if (title != NULL)
     {
+        int len;
+
         len = str_term_width1 (title) + 4;
         cols = max (cols, len);
     }
@@ -112,8 +114,8 @@ create_listbox_window_centered (int center_y, int center_x, int lines, int cols,
     listbox = g_new (Listbox, 1);
 
     listbox->dlg =
-        create_dlg (TRUE, ypos, xpos, lines + space, cols + space,
-                    listbox_colors, NULL, NULL, help, title, DLG_REVERSE | DLG_TRYUP);
+        dlg_create (TRUE, ypos, xpos, lines + space, cols + space,
+                    listbox_colors, NULL, NULL, help, title, DLG_TRYUP);
 
     listbox->list = listbox_new (2, 2, lines, cols, FALSE, NULL);
     add_widget (listbox->dlg, listbox->list);
@@ -137,9 +139,9 @@ run_listbox (Listbox * l)
 {
     int val = -1;
 
-    if (run_dlg (l->dlg) != B_CANCEL)
+    if (dlg_run (l->dlg) != B_CANCEL)
         val = l->list->pos;
-    destroy_dlg (l->dlg);
+    dlg_destroy (l->dlg);
     g_free (l);
     return val;
 }

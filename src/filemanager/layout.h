@@ -8,6 +8,8 @@
 #include "lib/global.h"
 #include "lib/widget.h"
 
+#include "panel.h"
+
 /*** typedefs(not structures) and defined constants **********************************************/
 
 typedef enum
@@ -22,8 +24,6 @@ typedef enum
 /*** enums ***************************************************************************************/
 
 /*** structures declarations (and typedefs of structures)*****************************************/
-
-struct WPanel;
 
 typedef struct
 {
@@ -70,16 +70,16 @@ const char *get_nth_panel_name (int num);
 
 struct Widget *get_panel_widget (int idx);
 
-struct WPanel *get_other_panel (void);
+WPanel *get_other_panel (void);
 
 void save_panel_dir (int idx);
-char *get_panel_dir_for (const struct WPanel *widget);
+char *get_panel_dir_for (const WPanel * widget);
 
 void set_hintbar (const char *str);
 
 /* Rotating dash routines */
 void use_dash (gboolean flag);  /* Disable/Enable rotate_dash routines */
-void rotate_dash (void);
+void rotate_dash (gboolean show);
 
 #ifdef ENABLE_SUBSHELL
 gboolean do_load_prompt (void);

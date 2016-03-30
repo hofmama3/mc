@@ -156,13 +156,11 @@ dnl ############################################################################
 dnl Check for header files
 dnl ############################################################################
 
-AC_CHECK_HEADERS([unistd.h string.h memory.h limits.h malloc.h \
-	utime.h fcntl.h sys/statfs.h sys/vfs.h sys/time.h \
+AC_CHECK_HEADERS([string.h memory.h limits.h malloc.h \
+	utime.h sys/statfs.h sys/vfs.h \
 	sys/select.h sys/ioctl.h stropts.h arpa/inet.h \
-	sys/socket.h sys/sysmacros.h sys/types.h sys/mkdev.h])
+	sys/socket.h])
 AC_HEADER_MAJOR
-AC_HEADER_TIME
-AC_HEADER_DIRENT
 AC_HEADER_ASSERT
 
 
@@ -170,7 +168,6 @@ dnl ############################################################################
 dnl Check for types
 dnl ############################################################################
 
-AC_C_CONST
 dnl Check largefile before type sizeof checks
 AC_SYS_LARGEFILE
 
@@ -226,16 +223,10 @@ dnl Check for functions
 dnl ############################################################################
 
 AC_CHECK_FUNCS([\
-	atoll \
-	isascii \
-	statfs sysconf \
-	tcgetattr tcsetattr \
-	ftruncate \
 	strverscmp \
 	strncasecmp \
 	realpath
 ])
-AC_FUNC_STRCOLL
 
 dnl getpt is a GNU Extension (glibc 2.1.x)
 AC_CHECK_FUNCS(posix_openpt, , [AC_CHECK_FUNCS(getpt)])
@@ -275,27 +266,11 @@ dnl ############################################################################
 AM_GNU_GETTEXT(no-libtool, need-ngettext)
 AM_GNU_GETTEXT_VERSION(0.14.3)
 
-if test "x$USE_INCLUDED_LIBINTL" = xyes; then
-    CPPFLAGS="$CPPFLAGS -I\$(top_builddir)/intl -I\$(top_srcdir)/intl"
-fi
-
-dnl User visible support for charset conversion.
-AC_ARG_ENABLE([charset],
-    AS_HELP_STRING([--enable-charset], [Support for charset selection and conversion @<:@yes@:>@]))
-have_charset=
-charset_msg="no"
-if test "x$enable_charset" != "xno"; then
-    AC_DEFINE(HAVE_CHARSET, 1, [Define to enable charset selection and conversion])
-    have_charset=yes
-    charset_msg="yes"
-fi
-
+MC_I18N
 
 dnl ############################################################################
 dnl OS specific flags
 dnl ############################################################################
-
-AC_ISC_POSIX
 
 case $host_os in
 aux*)
@@ -409,7 +384,7 @@ dnl ############################################################################
 dnl MC options
 dnl ############################################################################
 
-MC_WITH_EDIT
+MC_WITH_INTERNAL_EDIT
 
 dnl Diff viewer support.
 AC_ARG_WITH([diff_viewer],
@@ -504,11 +479,14 @@ AC_SUBST(LIBS)
 AM_CONDITIONAL(USE_NLS, [test x"$USE_NLS" = xyes])
 AM_CONDITIONAL(USE_MAINTAINER_MODE, [test x"$USE_MAINTAINER_MODE" = xyes])
 AM_CONDITIONAL(USE_SCREEN_SLANG, [test x"$with_screen" = xslang])
-AM_CONDITIONAL(USE_EDIT, [test x"$use_edit" = xyes ])
+AM_CONDITIONAL(USE_INTERNAL_EDIT, [test x"$use_internal_edit" = xyes ])
 AM_CONDITIONAL(USE_ASPELL, [test x"$enable_aspell" = xyes ])
 AM_CONDITIONAL(USE_DIFF, [test -n "$use_diff"])
 AM_CONDITIONAL(CHARSET, [test -n "$have_charset"])
 AM_CONDITIONAL(CONS_SAVER, [test -n "$cons_saver"])
+dnl Clarify do we really need GModule
+AM_CONDITIONAL([HAVE_GMODULE], [test -n "$g_module_supported" && \
+                                test x"$textmode_x11_support" = x"yes" -o x"$enable_aspell" = x"yes"])
 
 AC_DEFINE_UNQUOTED([MC_CONFIGURE_ARGS], ["$ac_configure_args"], [MC configure arguments])
 
@@ -617,7 +595,10 @@ misc/syntax/Makefile
 misc/syntax/Syntax
 
 doc/Makefile
+
 doc/hints/Makefile
+doc/hints/l10n/Makefile
+
 doc/man/Makefile
 doc/man/es/Makefile
 doc/man/hu/Makefile
@@ -644,9 +625,13 @@ tests/Makefile
 tests/lib/Makefile
 tests/lib/mcconfig/Makefile
 tests/lib/search/Makefile
+tests/lib/strutil/Makefile
 tests/lib/vfs/Makefile
+tests/lib/widget/Makefile
 tests/src/Makefile
 tests/src/filemanager/Makefile
+tests/src/editor/Makefile
+tests/src/editor/test-data.txt
 ])
 fi
 
@@ -671,3 +656,12 @@ Configuration:
   Support for charset:        ${charset_msg}
   Search type:                ${SEARCH_TYPE}
 ])
+
+dnl option checking is disable by default due to AC_CONFIG_SUBDIRS
+dnl we enable it back for top-level ./configure
+if test -n "$ac_unrecognized_opts"; then
+  case $enable_option_checking in
+    fatal) AC_MSG_ERROR([unrecognized options: $ac_unrecognized_opts]) ;;
+    *)     AC_MSG_WARN( [unrecognized options: $ac_unrecognized_opts]) ;;
+  esac
+fi

@@ -1,14 +1,11 @@
 /*
    Common strings utilities
 
-   Copyright (C) 2007, 2011
+   Copyright (C) 2007, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
    Rostislav Benes, 2007
-
-   The file_date routine is mostly from GNU's fileutils package,
-   written by Richard Stallman and David MacKenzie.
 
    This file is part of the Midnight Commander.
 
@@ -24,16 +21,14 @@
 
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
  */
 
 #include <config.h>
+
 #include <stdlib.h>
-#include <stdio.h>
 #include <langinfo.h>
 #include <string.h>
 #include <errno.h>
-#include <stdarg.h>
 
 #include "lib/global.h"
 #include "lib/strutil.h"
@@ -106,12 +101,11 @@ static estr_t
 _str_convert (GIConv coder, const char *string, int size, GString * buffer)
 {
     estr_t state = ESTR_SUCCESS;
-    gchar *tmp_buff = NULL;
     gssize left;
     gsize bytes_read = 0;
     gsize bytes_written = 0;
-    GError *error = NULL;
-    errno = 0;
+
+    errno = 0;                  /* FIXME: is it really needed? */
 
     if (coder == INVALID_CONV)
         return ESTR_FAILURE;
@@ -126,9 +120,7 @@ _str_convert (GIConv coder, const char *string, int size, GString * buffer)
        }
      */
     if (size < 0)
-    {
         size = strlen (string);
-    }
     else
     {
         left = strlen (string);
@@ -139,11 +131,14 @@ _str_convert (GIConv coder, const char *string, int size, GString * buffer)
     left = size;
     g_iconv (coder, NULL, NULL, NULL, NULL);
 
-    while (left)
+    while (left != 0)
     {
+        gchar *tmp_buff;
+        GError *error = NULL;
+
         tmp_buff = g_convert_with_iconv ((const gchar *) string,
                                          left, coder, &bytes_read, &bytes_written, &error);
-        if (error)
+        if (error != NULL)
         {
             int code = error->code;
 
@@ -172,17 +167,13 @@ _str_convert (GIConv coder, const char *string, int size, GString * buffer)
                     g_free (tmp_buff);
                 }
 
-                if ((int) bytes_read < left)
-                {
-                    string += bytes_read + 1;
-                    size -= (bytes_read + 1);
-                    left -= (bytes_read + 1);
-                    g_string_append_c (buffer, *(string - 1));
-                }
-                else
-                {
+                if ((int) bytes_read >= left)
                     return ESTR_PROBLEM;
-                }
+
+                string += bytes_read + 1;
+                size -= (bytes_read + 1);
+                left -= (bytes_read + 1);
+                g_string_append_c (buffer, *(string - 1));
                 state = ESTR_PROBLEM;
                 break;
 
@@ -207,31 +198,26 @@ _str_convert (GIConv coder, const char *string, int size, GString * buffer)
                 return ESTR_FAILURE;
             }
         }
+        else if (tmp_buff == NULL)
+        {
+            g_string_append (buffer, string);
+            return ESTR_PROBLEM;
+        }
+        else if (*tmp_buff == '\0')
+        {
+            g_free (tmp_buff);
+            g_string_append (buffer, string);
+            return state;
+        }
         else
         {
-            if (tmp_buff != NULL)
-            {
-                if (*tmp_buff)
-                {
-                    g_string_append (buffer, tmp_buff);
-                    g_free (tmp_buff);
-                    string += bytes_read;
-                    left -= bytes_read;
-                }
-                else
-                {
-                    g_free (tmp_buff);
-                    g_string_append (buffer, string);
-                    return state;
-                }
-            }
-            else
-            {
-                g_string_append (buffer, string);
-                return ESTR_PROBLEM;
-            }
+            g_string_append (buffer, tmp_buff);
+            g_free (tmp_buff);
+            string += bytes_read;
+            left -= bytes_read;
         }
     }
+
     return state;
 }
 
@@ -256,13 +242,10 @@ str_conv_gerror_message (GError * error, const char *def_msg)
 estr_t
 str_vfs_convert_from (GIConv coder, const char *string, GString * buffer)
 {
-    estr_t result;
+    estr_t result = ESTR_SUCCESS;
 
     if (coder == str_cnv_not_convert)
-    {
         g_string_append (buffer, string != NULL ? string : "");
-        result = ESTR_SUCCESS;
-    }
     else
         result = _str_convert (coder, string, -1, buffer);
 
@@ -280,11 +263,13 @@ str_printf (GString * buffer, const char *format, ...)
 {
     va_list ap;
     va_start (ap, format);
+
 #if GLIB_CHECK_VERSION (2, 14, 0)
     g_string_append_vprintf (buffer, format, ap);
 #else
     {
         gchar *tmp;
+
         tmp = g_strdup_vprintf (format, ap);
         g_string_append (buffer, tmp);
         g_free (tmp);
@@ -311,14 +296,10 @@ str_translate_char (GIConv conv, const char *keys, size_t ch_size, char *output,
 
     cnv = g_iconv (conv, (gchar **) & keys, &left, &output, &out_size);
     if (cnv == (size_t) (-1))
-    {
         return (errno == EINVAL) ? ESTR_PROBLEM : ESTR_FAILURE;
-    }
-    else
-    {
-        output[0] = '\0';
-        return ESTR_SUCCESS;
-    }
+
+    output[0] = '\0';
+    return ESTR_SUCCESS;
 }
 
 
@@ -340,15 +321,17 @@ str_detect_termencoding (void)
 static int
 str_test_encoding_class (const char *encoding, const char **table)
 {
-    int t;
     int result = 0;
-    if (encoding == NULL)
-        return result;
 
-    for (t = 0; table[t] != NULL; t++)
+    if (encoding != NULL)
     {
-        result += (g_ascii_strncasecmp (encoding, table[t], strlen (table[t])) == 0);
+        int t;
+
+        for (t = 0; table[t] != NULL; t++)
+            if (g_ascii_strncasecmp (encoding, table[t], strlen (table[t])) == 0)
+                result++;
     }
+
     return result;
 }
 
@@ -356,17 +339,11 @@ static void
 str_choose_str_functions (void)
 {
     if (str_test_encoding_class (codeset, str_utf8_encodings))
-    {
         used_class = str_utf8_init ();
-    }
     else if (str_test_encoding_class (codeset, str_8bit_encodings))
-    {
         used_class = str_8bit_init ();
-    }
     else
-    {
         used_class = str_ascii_init ();
-    }
 }
 
 gboolean
@@ -393,7 +370,7 @@ str_init_strings (const char *termenc)
         if (str_cnv_not_convert == INVALID_CONV)
         {
             g_free (codeset);
-            codeset = g_strdup ("ASCII");
+            codeset = g_strdup (DEFAULT_CHARSET);
             str_cnv_not_convert = g_iconv_open (codeset, codeset);
         }
     }
@@ -629,49 +606,49 @@ str_column_to_pos (const char *text, size_t pos)
 int
 str_isspace (const char *ch)
 {
-    return used_class.isspace (ch);
+    return used_class.char_isspace (ch);
 }
 
 int
 str_ispunct (const char *ch)
 {
-    return used_class.ispunct (ch);
+    return used_class.char_ispunct (ch);
 }
 
 int
 str_isalnum (const char *ch)
 {
-    return used_class.isalnum (ch);
+    return used_class.char_isalnum (ch);
 }
 
 int
 str_isdigit (const char *ch)
 {
-    return used_class.isdigit (ch);
+    return used_class.char_isdigit (ch);
 }
 
 int
 str_toupper (const char *ch, char **out, size_t * remain)
 {
-    return used_class.toupper (ch, out, remain);
+    return used_class.char_toupper (ch, out, remain);
 }
 
 int
 str_tolower (const char *ch, char **out, size_t * remain)
 {
-    return used_class.tolower (ch, out, remain);
+    return used_class.char_tolower (ch, out, remain);
 }
 
 int
 str_isprint (const char *ch)
 {
-    return used_class.isprint (ch);
+    return used_class.char_isprint (ch);
 }
 
-int
+gboolean
 str_iscombiningmark (const char *ch)
 {
-    return used_class.iscombiningmark (ch);
+    return used_class.char_iscombiningmark (ch);
 }
 
 const char *
@@ -783,7 +760,6 @@ str_msg_term_size (const char *text, int *lines, int *columns)
     char *p, *tmp;
     char *q;
     char c = '\0';
-    int width;
 
     *lines = 1;
     *columns = 0;
@@ -793,6 +769,8 @@ str_msg_term_size (const char *text, int *lines, int *columns)
 
     while (TRUE)
     {
+        int width;
+
         q = strchr (p, '\n');
         if (q != NULL)
         {
@@ -833,7 +811,47 @@ strrstr_skip_count (const char *haystack, const char *needle, size_t skip_count)
         len = semi - haystack - 1;
     }
     while (skip_count-- != 0);
+
     return semi;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* Interprete string as a non-negative decimal integer, optionally multiplied by various values.
+ *
+ * @param str input value
+ * @param invalid set to TRUE if "str" does not represent a number in this format
+ *
+ * @return non-integer representation of "str", 0 in case of error.
+ */
+
+uintmax_t
+parse_integer (const char *str, gboolean * invalid)
+{
+    uintmax_t n;
+    char *suffix;
+    strtol_error_t e;
+
+    e = xstrtoumax (str, &suffix, 10, &n, "bcEGkKMPTwYZ0");
+    if (e == LONGINT_INVALID_SUFFIX_CHAR && *suffix == 'x')
+    {
+        uintmax_t multiplier;
+
+        multiplier = parse_integer (suffix + 1, invalid);
+        if (multiplier != 0 && n * multiplier / multiplier != n)
+        {
+            *invalid = TRUE;
+            return 0;
+        }
+
+        n *= multiplier;
+    }
+    else if (e != LONGINT_OK)
+    {
+        *invalid = TRUE;
+        n = 0;
+    }
+
+    return n;
 }
 
 /* --------------------------------------------------------------------------------------------- */

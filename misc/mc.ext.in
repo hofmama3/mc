@@ -117,8 +117,8 @@ regex/^\[git\]
 
 ### Archives ###
 
-# .tgz, .tpz, .tar.gz, .tar.z, .tar.Z, .ipk, .gem, .war
-regex/\.t([gp]?z|ar\.g?[zZ])$|\.ipk$|\.gem$|\.war$
+# .tgz, .tpz, .tar.gz, .tar.z, .tar.Z, .ipk, .gem
+regex/\.t([gp]?z|ar\.g?[zZ])$|\.ipk$|\.gem$
 	Open=%cd %p/utar://
 	View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.gz
 
@@ -682,6 +682,11 @@ shell/i/.arc
 
 # zip
 type/i/^zip\ archive
+	Open=%cd %p/uzip://
+	View=%view{ascii} @EXTHELPERSDIR@/archive.sh view zip
+
+# jar(zip)
+type/i/^Java\ Jar\ file\ data\ \(zip\)
 	Open=%cd %p/uzip://
 	View=%view{ascii} @EXTHELPERSDIR@/archive.sh view zip
 

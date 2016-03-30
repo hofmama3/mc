@@ -8,6 +8,8 @@
 
 /*** typedefs(not structures) and defined constants **********************************************/
 
+#define GAUGE(x) ((WGauge *)(x))
+
 /*** enums ***************************************************************************************/
 
 /*** structures declarations (and typedefs of structures)*****************************************/
@@ -25,7 +27,7 @@ typedef struct WGauge
 
 /*** declarations of public functions ************************************************************/
 
-WGauge *gauge_new (int y, int x, gboolean shown, int max, int current);
+WGauge *gauge_new (int y, int x, int cols, gboolean shown, int max, int current);
 void gauge_set_value (WGauge * g, int max, int current);
 void gauge_show (WGauge * g, gboolean shown);
 

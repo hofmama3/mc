@@ -3,7 +3,7 @@
    Common finctions (used from some other mcviewer functions)
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2011
+   2004, 2005, 2006, 2007, 2009, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
@@ -14,8 +14,8 @@
    Norbert Warmuth, 1997
    Pavel Machek, 1998
    Roland Illig <roland.illig@gmx.de>, 2004, 2005
-   Slava Zanko <slavazanko@google.com>, 2009
-   Andrew Borodin <aborodin@vmail.ru>, 2009
+   Slava Zanko <slavazanko@google.com>, 2009, 2013
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2013
    Ilia Maslakov <il.smind@gmail.com>, 2009
 
    This file is part of the Midnight Commander.
@@ -53,12 +53,11 @@
 #endif
 
 #include "internal.h"
-#include "mcviewer.h"
 
 /*** global variables ****************************************************************************/
 
 #define OFF_T_BITWIDTH (unsigned int) (sizeof (off_t) * CHAR_BIT - 1)
-const off_t INVALID_OFFSET = (off_t) - 1;
+const off_t INVALID_OFFSET = (off_t) (-1);
 const off_t OFFSETTYPE_MAX = ((off_t) 1 << (OFF_T_BITWIDTH - 1)) - 1;
 
 /*** file scope macro definitions ****************************************************************/
@@ -77,29 +76,24 @@ const off_t OFFSETTYPE_MAX = ((off_t) 1 << (OFF_T_BITWIDTH - 1)) - 1;
 void
 mcview_toggle_magic_mode (mcview_t * view)
 {
-    char *filename, *command;
+    char *command;
     dir_list *dir;
-    int *dir_count, *dir_idx;
+    int *dir_idx;
 
     mcview_altered_magic_flag = 1;
     view->magic_mode = !view->magic_mode;
 
     /* reinit view */
-    filename = vfs_path_to_str (view->filename_vpath);
     command = g_strdup (view->command);
     dir = view->dir;
-    dir_count = view->dir_count;
     dir_idx = view->dir_idx;
     view->dir = NULL;
-    view->dir_count = NULL;
     view->dir_idx = NULL;
     mcview_done (view);
     mcview_init (view);
-    mcview_load (view, command, filename, 0);
+    mcview_load (view, command, vfs_path_as_str (view->filename_vpath), 0);
     view->dir = dir;
-    view->dir_count = dir_count;
     view->dir_idx = dir_idx;
-    g_free (filename);
     g_free (command);
 
     view->dpy_bbar_dirty = TRUE;
@@ -155,45 +149,6 @@ mcview_toggle_hex_mode (mcview_t * view)
 
 /* --------------------------------------------------------------------------------------------- */
 
-gboolean
-mcview_ok_to_quit (mcview_t * view)
-{
-    int r;
-
-    if (view->change_list == NULL)
-        return TRUE;
-
-    if (!mc_global.midnight_shutdown)
-    {
-        query_set_sel (2);
-        r = query_dialog (_("Quit"),
-                          _("File was modified. Save with exit?"), D_NORMAL, 3,
-                          _("&Yes"), _("&No"), _("&Cancel quit"));
-    }
-    else
-    {
-        r = query_dialog (_("Quit"),
-                          _("Midnight Commander is being shut down.\nSave modified file?"),
-                          D_NORMAL, 2, _("&Yes"), _("&No"));
-        /* Esc is No */
-        if (r == -1)
-            r = 1;
-    }
-
-    switch (r)
-    {
-    case 0:                    /* Yes */
-        return mcview_hexedit_save_changes (view) || mc_global.midnight_shutdown;
-    case 1:                    /* No */
-        mcview_hexedit_free_change_list (view);
-        return TRUE;
-    default:
-        return FALSE;
-    }
-}
-
-/* --------------------------------------------------------------------------------------------- */
-
 void
 mcview_init (mcview_t * view)
 {
@@ -231,7 +186,7 @@ mcview_init (mcview_t * view)
     view->search_end = 0;
 
     view->marker = 0;
-    for (i = 0; i < sizeof (view->marks) / sizeof (view->marks[0]); i++)
+    for (i = 0; i < G_N_ELEMENTS (view->marks); i++)
         view->marks[i] = 0;
 
     view->update_steps = 0;
@@ -295,9 +250,8 @@ mcview_done (mcview_t * view)
     if (mc_global.mc_run_mode == MC_RUN_VIEWER && view->dir != NULL)
     {
         /* mcviewer is the owner of file list */
-        clean_dir (view->dir, *view->dir_count);
+        dir_list_clean (view->dir);
         g_free (view->dir->list);
-        g_free (view->dir_count);
         g_free (view->dir_idx);
         g_free (view->dir);
     }
@@ -433,15 +387,15 @@ mcview_eol (mcview_t * view, off_t current, off_t limit)
 /* --------------------------------------------------------------------------------------------- */
 
 char *
-mcview_get_title (const Dlg_head * h, size_t len)
+mcview_get_title (const WDialog * h, size_t len)
 {
     const mcview_t *view = (const mcview_t *) find_widget_type (h, mcview_callback);
     const char *modified = view->hexedit_mode && (view->change_list != NULL) ? "(*) " : "    ";
     const char *file_label;
-    char *view_filename;
+    const char *view_filename;
     char *ret_str;
 
-    view_filename = view->filename_vpath != NULL ? vfs_path_to_str (view->filename_vpath) : NULL;
+    view_filename = vfs_path_as_str (view->filename_vpath);
 
     len -= 4;
 
@@ -449,7 +403,6 @@ mcview_get_title (const Dlg_head * h, size_t len)
     file_label = str_term_trim (file_label, len - str_term_width1 (_("View: ")));
 
     ret_str = g_strconcat (_("View: "), modified, file_label, (char *) NULL);
-    g_free (view_filename);
     return ret_str;
 }
 

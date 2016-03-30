@@ -2,7 +2,7 @@
    Virtual File System: FTP file system.
 
    Copyright (C) 1995, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2006, 2007, 2008, 2009, 2010, 2011
+   2006, 2007, 2008, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
@@ -12,7 +12,7 @@
    Norbert Warmuth, 1997
    Pavel Machek, 1998
    Yury V. Zaytsev, 2010
-   Slava Zanko <slavazanko@gmail.com>, 2010
+   Slava Zanko <slavazanko@gmail.com>, 2010, 2013
    Andrew Borodin <aborodin@vmail.ru>, 2010
 
    This file is part of the Midnight Commander.
@@ -143,7 +143,7 @@ int ftpfs_directory_timeout = 900;
 /* Proxy host */
 char *ftpfs_proxy_host = NULL;
 
-/* wether we have to use proxy by default? */
+/* whether we have to use proxy by default? */
 int ftpfs_always_use_proxy = 0;
 
 int ftpfs_ignore_chattr_errors = 1;
@@ -259,7 +259,7 @@ static const char *netrcp;
 
    When the remote server is an amiga:
    a) strip leading slash if necesarry
-   b) replace first occurance of ":/" with ":"
+   b) replace first occurrence of ":/" with ":"
    c) strip trailing "/."
  */
 
@@ -303,7 +303,7 @@ ftpfs_translate_path (struct vfs_class *me, struct vfs_s_super *super, const cha
 
         ret = g_strdup (remote_path);
 
-        /* replace first occurance of ":/" with ":" */
+        /* replace first occurrence of ":/" with ":" */
         p = strchr (ret, ':');
         if ((p != NULL) && (*(p + 1) == '/'))
             memmove (p + 1, p + 2, strlen (p + 2) + 1);
@@ -386,6 +386,7 @@ ftpfs_get_reply (struct vfs_class *me, int sock, char *string_buf, int string_le
             code = 421;
             return 4;
         }
+        /* cppcheck-suppress invalidscanf */
         switch (sscanf (answer, "%d", &code))
         {
         case 0:
@@ -405,6 +406,7 @@ ftpfs_get_reply (struct vfs_class *me, int sock, char *string_buf, int string_le
                         code = 421;
                         return 4;
                     }
+                    /* cppcheck-suppress invalidscanf */
                     if ((sscanf (answer, "%d", &i) > 0) && (code == i) && (answer[3] == ' '))
                         break;
                 }
@@ -478,6 +480,7 @@ ftpfs_command (struct vfs_class *me, struct vfs_s_super *super, int wait_reply, 
         {
             size_t ret;
             ret = fwrite (cmdstr, cmdlen, 1, MEDATA->logfile);
+            (void) ret;
         }
 
         fflush (MEDATA->logfile);
@@ -653,7 +656,8 @@ ftpfs_login_server (struct vfs_class *me, struct vfs_s_super *super, const char 
 
                 p = g_strdup_printf (_("FTP: Account required for user %s"),
                                      super->path_element->user);
-                op = input_dialog (p, _("Account:"), MC_HISTORY_FTPFS_ACCOUNT, "");
+                op = input_dialog (p, _("Account:"), MC_HISTORY_FTPFS_ACCOUNT, "",
+                                   INPUT_COMPLETE_USERNAMES);
                 g_free (p);
                 if (op == NULL)
                     ERRNOR (EPERM, 0);
@@ -695,23 +699,27 @@ static void
 ftpfs_load_no_proxy_list (void)
 {
     /* FixMe: shouldn't be hardcoded!!! */
-    char s[BUF_LARGE];          /* provide for BUF_LARGE characters */
-    FILE *npf;
-    int c;
-    char *p;
     static char *mc_file = NULL;
 
     mc_file = g_build_filename (mc_global.sysconfig_dir, "mc.no_proxy", (char *) NULL);
     if (exist_file (mc_file))
     {
+        FILE *npf;
+
         npf = fopen (mc_file, "r");
         if (npf != NULL)
         {
+            char s[BUF_LARGE];  /* provide for BUF_LARGE characters */
+
             while (fgets (s, sizeof (s), npf) != NULL)
             {
+                char *p;
+
                 p = strchr (s, '\n');
                 if (p == NULL)  /* skip bogus entries */
                 {
+                    int c;
+
                     while ((c = fgetc (npf)) != EOF && c != '\n')
                         ;
                     continue;
@@ -1087,6 +1095,7 @@ ftpfs_setup_passive_pasv (struct vfs_class *me, struct vfs_s_super *super,
         return 0;
     if (!isdigit ((unsigned char) *c))
         return 0;
+    /* cppcheck-suppress invalidscanf */
     if (sscanf (c, "%d,%d,%d,%d,%d,%d", &xa, &xb, &xc, &xd, &xe, &xf) != 6)
         return 0;
 
@@ -1407,7 +1416,6 @@ ftpfs_linear_abort (struct vfs_class *me, vfs_file_handler_t * fh)
     struct vfs_s_super *super = FH_SUPER;
     static unsigned char const ipbuf[3] = { IAC, IP, IAC };
     fd_set mask;
-    char buf[BUF_8K];
     int dsock = FH_SOCK;
     FH_SOCK = -1;
     SUP->ctl_connection_busy = 0;
@@ -1435,6 +1443,8 @@ ftpfs_linear_abort (struct vfs_class *me, vfs_file_handler_t * fh)
         if (select (dsock + 1, &mask, NULL, NULL, NULL) > 0)
         {
             struct timeval start_tim, tim;
+            char buf[BUF_8K];
+
             gettimeofday (&start_tim, NULL);
             /* flush the remaining data */
             while (read (dsock, buf, sizeof (buf)) > 0)
@@ -1492,7 +1502,7 @@ resolve_symlink_without_ls_options (struct vfs_class *me, struct vfs_s_super *su
             for (depth = 0; depth < 100; depth++)
             {                   /* depth protects against recursive symbolic links */
                 canonicalize_pathname (tmp);
-                fe = _get_file_entry (bucket, tmp, 0, 0);
+                fe = _get_file_entry_t (bucket, tmp, 0, 0);
                 if (fe)
                 {
                     if (S_ISLNK (fe->s.st_mode) && fe->l_stat == 0)
@@ -1744,13 +1754,13 @@ ftpfs_dir_load (struct vfs_class *me, struct vfs_s_inode *dir, char *remote_path
     if (num_entries == 0 && cd_first == 0)
     {
         /* The LIST command may produce an empty output. In such scenario
-           it is not clear whether this is caused by  `remote_path' being
+           it is not clear whether this is caused by  'remote_path' being
            a non-existent path or for some other reason (listing emtpy
            directory without the -a option, non-readable directory, etc.).
 
-           Since `dir_load' is a crucial method, when it comes to determine
+           Since 'dir_load' is a crucial method, when it comes to determine
            whether a given path is a _directory_, the code must try its best
-           to determine the type of `remote_path'. The only reliable way to
+           to determine the type of 'remote_path'. The only reliable way to
            achieve this is trough issuing a CWD command. */
 
         cd_first = 1;
@@ -1895,7 +1905,7 @@ ftpfs_linear_start (struct vfs_class *me, vfs_file_handler_t * fh, off_t offset)
 
 /* --------------------------------------------------------------------------------------------- */
 
-static int
+static ssize_t
 ftpfs_linear_read (struct vfs_class *me, vfs_file_handler_t * fh, void *buf, size_t len)
 {
     ssize_t n;
@@ -2154,7 +2164,7 @@ ftpfs_fh_open (struct vfs_class *me, vfs_file_handler_t * fh, int flags, mode_t 
                     goto fail;
                 }
                 close (handle);
-                fh->ino->localname = vfs_path_to_str (vpath);
+                fh->ino->localname = g_strdup (vfs_path_as_str (vpath));
                 vfs_path_free (vpath);
                 ftp->append = flags & O_APPEND;
             }
@@ -2226,8 +2236,7 @@ ftpfs_done (struct vfs_class *me)
 {
     (void) me;
 
-    g_slist_foreach (no_proxy, (GFunc) g_free, NULL);
-    g_slist_free (no_proxy);
+    g_slist_free_full (no_proxy, g_free);
 
     g_free (ftpfs_anonymous_passwd);
     g_free (ftpfs_proxy_host);
@@ -2308,11 +2317,12 @@ ftpfs_netrc_next (void)
 static int
 ftpfs_netrc_bad_mode (const char *netrcname)
 {
-    static int be_angry = 1;
     struct stat mystat;
 
     if (stat (netrcname, &mystat) >= 0 && (mystat.st_mode & 077))
     {
+        static int be_angry = 1;
+
         if (be_angry)
         {
             message (D_ERROR, MSG_ERROR,
@@ -2402,7 +2412,6 @@ ftpfs_netrc_lookup (const char *host, char **login, char **pass)
     char *tmp_pass = NULL;
     char hostname[MAXHOSTNAMELEN];
     const char *domain;
-    keyword_t keyword;
     static struct rupcache
     {
         struct rupcache *next;
@@ -2454,6 +2463,8 @@ ftpfs_netrc_lookup (const char *host, char **login, char **pass)
     /* Scan for keywords following "default" and "machine" */
     while (1)
     {
+        keyword_t keyword;
+
         int need_break = 0;
         keyword = ftpfs_netrc_next ();
 

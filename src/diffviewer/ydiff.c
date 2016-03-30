@@ -1,11 +1,11 @@
 /*
-   Copyright (C) 2007, 2010, 2011
+   Copyright (C) 2007, 2010, 2011, 2012, 2013
    The Free Software Foundation, Inc.
 
    Written by:
    Daniel Borca <dborca@yahoo.com>, 2007
-   Slava Zanko <slavazanko@gmail.com>, 2010
-   Andrew Borodin <aborodin@vmail.ru>, 2010
+   Slava Zanko <slavazanko@gmail.com>, 2010, 2013
+   Andrew Borodin <aborodin@vmail.ru>, 2010, 2012, 2013
    Ilia Maslakov <il.smind@gmail.com>, 2010
 
    This file is part of the Midnight Commander.
@@ -70,9 +70,11 @@
 #define g_array_foreach(a, TP, cbf) \
 do { \
     size_t g_array_foreach_i;\
-    TP *g_array_foreach_var = NULL; \
+    \
     for (g_array_foreach_i = 0; g_array_foreach_i < a->len; g_array_foreach_i++) \
     { \
+        TP *g_array_foreach_var; \
+        \
         g_array_foreach_var = &g_array_index (a, TP, g_array_foreach_i); \
         (*cbf) (g_array_foreach_var); \
     } \
@@ -80,9 +82,6 @@ do { \
 
 #define FILE_READ_BUF 4096
 #define FILE_FLAG_TEMP (1 << 0)
-
-#define OPTX 56
-#define OPTY 17
 
 #define ADD_CH '+'
 #define DEL_CH '-'
@@ -175,7 +174,7 @@ open_temp (void **name)
                  _("Cannot create temporary diff file\n%s"), unix_error_string (errno));
         return -1;
     }
-    *name = vfs_path_to_str (diff_file_name);
+    *name = g_strdup (vfs_path_as_str (diff_file_name));
     vfs_path_free (diff_file_name);
     return fd;
 }
@@ -1112,8 +1111,8 @@ lcsubstr (const char *s, int m, const char *t, int n, GArray * ret, int min)
         }
     }
 
-    free (Lcurr);
-    free (Lprev);
+    g_free (Lcurr);
+    g_free (Lprev);
     return z;
 }
 
@@ -1422,8 +1421,7 @@ cvt_mget (const char *src, size_t srcsize, char *dst, int dstsize, int skip, int
                 utf_ch = dview_get_utf ((char *) src, &w, &res);
                 if (w > 1)
                     skip += w - 1;
-                if (!g_unichar_isprint (utf_ch))
-                    utf_ch = '.';
+                (void) utf_ch;
             }
             else
             {
@@ -1524,8 +1522,7 @@ cvt_mgeta (const char *src, size_t srcsize, char *dst, int dstsize, int skip, in
                 utf_ch = dview_get_utf ((char *) src, &w, &res);
                 if (w > 1)
                     skip += w - 1;
-                if (!g_unichar_isprint (utf_ch))
-                    utf_ch = '.';
+                (void) utf_ch;
             }
             else
             {
@@ -1802,12 +1799,12 @@ redo_diff (WDiff * dview)
         if (dview->hdiff != NULL)
         {
             size_t i;
-            const DIFFLN *p;
-            const DIFFLN *q;
 
             for (i = 0; i < dview->a[DIFF_LEFT]->len; i++)
             {
                 GArray *h = NULL;
+                const DIFFLN *p;
+                const DIFFLN *q;
 
                 p = &g_array_index (dview->a[DIFF_LEFT], DIFFLN, i);
                 q = &g_array_index (dview->a[DIFF_RIGHT], DIFFLN, i);
@@ -2187,7 +2184,6 @@ static void
 do_merge_hunk (WDiff * dview, action_direction_t merge_direction)
 {
     int from1, to1, from2, to2;
-    int res;
     int hunk;
     diff_place_t n_merge = (merge_direction == FROM_RIGHT_TO_LEFT) ? DIFF_RIGHT : DIFF_LEFT;
 
@@ -2244,7 +2240,12 @@ do_merge_hunk (WDiff * dview, action_direction_t merge_direction)
         }
         fflush (merge_file);
         fclose (merge_file);
-        res = rewrite_backup_content (merge_file_name_vpath, dview->file[n_merge]);
+        {
+            int res;
+
+            res = rewrite_backup_content (merge_file_name_vpath, dview->file[n_merge]);
+            (void) res;
+        }
         mc_unlink (merge_file_name_vpath);
         vfs_path_free (merge_file_name_vpath);
     }
@@ -2353,35 +2354,31 @@ dview_diff_options (WDiff * dview)
         N_("&Minimal (Find a smaller set of change)")
     };
 
-    QuickWidget diffopt_widgets[] = {
-        QUICK_BUTTON (6, 10, 14, OPTY, N_("&Cancel"), B_CANCEL, NULL),
-        QUICK_BUTTON (2, 10, 14, OPTY, N_("&OK"), B_ENTER, NULL),
-
-        QUICK_CHECKBOX (3, OPTX, 12, OPTY,
-                        N_("Strip &trailing carriage return"), &dview->opt.strip_trailing_cr),
-        QUICK_CHECKBOX (3, OPTX, 11, OPTY,
-                        N_("Ignore all &whitespace"), &dview->opt.ignore_all_space),
-        QUICK_CHECKBOX (3, OPTX, 10, OPTY,
-                        N_("Ignore &space change"), &dview->opt.ignore_space_change),
-        QUICK_CHECKBOX (3, OPTX, 9, OPTY,
-                        N_("Ignore tab &expansion"), &dview->opt.ignore_tab_expansion),
-        QUICK_CHECKBOX (3, OPTX, 8, OPTY,
-                        N_("&Ignore case"), &dview->opt.ignore_case),
-        QUICK_LABEL (3, OPTX, 7, OPTY, N_("Diff extra options")),
-        QUICK_RADIO (3, OPTX, 3, OPTY,
-                     3, (const char **) quality_str, (int *) &dview->opt.quality),
-        QUICK_LABEL (3, OPTX, 2, OPTY, N_("Diff algorithm")),
-
+    quick_widget_t quick_widgets[] = {
+        /* *INDENT-OFF* */
+        QUICK_START_GROUPBOX (N_("Diff algorithm")),
+            QUICK_RADIO (3, (const char **) quality_str, (int *) &dview->opt.quality, NULL),
+        QUICK_STOP_GROUPBOX,
+        QUICK_START_GROUPBOX (N_("Diff extra options")),
+            QUICK_CHECKBOX (N_("&Ignore case"), &dview->opt.ignore_case, NULL),
+            QUICK_CHECKBOX (N_("Ignore tab &expansion"), &dview->opt.ignore_tab_expansion, NULL),
+            QUICK_CHECKBOX (N_("Ignore &space change"), &dview->opt.ignore_space_change, NULL),
+            QUICK_CHECKBOX (N_("Ignore all &whitespace"), &dview->opt.ignore_all_space, NULL),
+            QUICK_CHECKBOX (N_("Strip &trailing carriage return"), &dview->opt.strip_trailing_cr,
+                            NULL),
+        QUICK_STOP_GROUPBOX,
+        QUICK_BUTTONS_OK_CANCEL,
         QUICK_END
+        /* *INDENT-ON* */
     };
 
-    QuickDialog diffopt = {
-        OPTX, OPTY, -1, -1,
+    quick_dialog_t qdlg = {
+        -1, -1, 56,
         N_("Diff Options"), "[Diff Options]",
-        diffopt_widgets, NULL, NULL, FALSE
+        quick_widgets, NULL, NULL
     };
 
-    if (quick_dialog (&diffopt) != B_CANCEL)
+    if (quick_dialog (&qdlg) != B_CANCEL)
         dview_reread (dview);
 }
 
@@ -2445,7 +2442,7 @@ dview_init (WDiff * dview, const char *args, const char *file1, const char *file
     ndiff = redo_diff (dview);
     if (ndiff < 0)
     {
-        /* goto WIDGET_DESTROY stage: dview_fini() */
+        /* goto MSG_DESTROY stage: dview_fini() */
         f_close (f[DIFF_LEFT]);
         f_close (f[DIFF_RIGHT]);
         return -1;
@@ -2867,7 +2864,7 @@ dview_update (WDiff * dview)
 static void
 dview_edit (WDiff * dview, diff_place_t ord)
 {
-    Dlg_head *h;
+    WDialog *h;
     gboolean h_modal;
     int linenum, lineofs;
 
@@ -2911,7 +2908,9 @@ dview_goto_cmd (WDiff * dview, diff_place_t ord)
     int newline;
     char *input;
 
-    input = input_dialog (_(title[ord]), _("Enter line:"), MC_HISTORY_YDIFF_GOTO_LINE, prev);
+    input =
+        input_dialog (_(title[ord]), _("Enter line:"), MC_HISTORY_YDIFF_GOTO_LINE, prev,
+                      INPUT_COMPLETE_NONE);
     if (input != NULL)
     {
         const char *s = input;
@@ -2922,10 +2921,10 @@ dview_goto_cmd (WDiff * dview, diff_place_t ord)
 
             if (newline > 0)
             {
-                const DIFFLN *p;
-
                 for (; i < dview->a[ord]->len; i++)
                 {
+                    const DIFFLN *p;
+
                     p = &g_array_index (dview->a[ord], DIFFLN, i);
                     if (p->line == newline)
                         break;
@@ -2944,7 +2943,7 @@ static void
 dview_labels (WDiff * dview)
 {
     Widget *d;
-    Dlg_head *h;
+    WDialog *h;
     WButtonBar *b;
 
     d = WIDGET (dview);
@@ -3314,23 +3313,23 @@ static cb_ret_t
 dview_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
     WDiff *dview = (WDiff *) w;
-    Dlg_head *h = w->owner;
+    WDialog *h = w->owner;
     cb_ret_t i;
 
     switch (msg)
     {
-    case WIDGET_INIT:
+    case MSG_INIT:
         dview_labels (dview);
         dview_load_options (dview);
         dview_update (dview);
         return MSG_HANDLED;
 
-    case WIDGET_DRAW:
+    case MSG_DRAW:
         dview->new_frame = 1;
         dview_update (dview);
         return MSG_HANDLED;
 
-    case WIDGET_KEY:
+    case MSG_KEY:
         i = dview_handle_key (dview, parm);
         if (dview->view_quit)
             dlg_stop (h);
@@ -3338,7 +3337,7 @@ dview_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *d
             dview_update (dview);
         return i;
 
-    case WIDGET_COMMAND:
+    case MSG_ACTION:
         i = dview_execute_cmd (dview, parm);
         if (dview->view_quit)
             dlg_stop (h);
@@ -3346,20 +3345,20 @@ dview_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *d
             dview_update (dview);
         return i;
 
-    case WIDGET_DESTROY:
+    case MSG_DESTROY:
         dview_save_options (dview);
         dview_fini (dview);
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-dview_adjust_size (Dlg_head * h)
+dview_adjust_size (WDialog * h)
 {
     WDiff *dview;
     WButtonBar *bar;
@@ -3376,17 +3375,18 @@ dview_adjust_size (Dlg_head * h)
 /* --------------------------------------------------------------------------------------------- */
 
 static cb_ret_t
-dview_dialog_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, void *data)
+dview_dialog_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
     WDiff *dview = (WDiff *) data;
+    WDialog *h = DIALOG (w);
 
     switch (msg)
     {
-    case DLG_RESIZE:
+    case MSG_RESIZE:
         dview_adjust_size (h);
         return MSG_HANDLED;
 
-    case DLG_ACTION:
+    case MSG_ACTION:
         /* shortcut */
         if (sender == NULL)
             return dview_execute_cmd (NULL, parm);
@@ -3394,14 +3394,14 @@ dview_dialog_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, v
         if (sender == WIDGET (find_buttonbar (h)))
         {
             if (data != NULL)
-                return send_message (WIDGET (data), NULL, WIDGET_COMMAND, parm, NULL);
+                return send_message (data, NULL, MSG_ACTION, parm, NULL);
 
             dview = (WDiff *) find_widget_type (h, dview_callback);
             return dview_execute_cmd (dview, parm);
         }
         return MSG_NOT_HANDLED;
 
-    case DLG_VALIDATE:
+    case MSG_VALIDATE:
         dview = (WDiff *) find_widget_type (h, dview_callback);
         h->state = DLG_ACTIVE;  /* don't stop the dialog before final decision */
         if (dview_ok_to_exit (dview))
@@ -3409,14 +3409,14 @@ dview_dialog_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, v
         return MSG_HANDLED;
 
     default:
-        return default_dlg_callback (h, sender, msg, parm, data);
+        return dlg_default_callback (w, sender, msg, parm, data);
     }
 }
 
 /* --------------------------------------------------------------------------------------------- */
 
 static char *
-dview_get_title (const Dlg_head * h, size_t len)
+dview_get_title (const WDialog * h, size_t len)
 {
     const WDiff *dview;
     const char *modified = " (*) ";
@@ -3446,16 +3446,16 @@ diff_view (const char *file1, const char *file2, const char *label1, const char 
     int error;
     WDiff *dview;
     Widget *w;
-    Dlg_head *dview_dlg;
+    WDialog *dview_dlg;
 
     /* Create dialog and widgets, put them on the dialog */
     dview_dlg =
-        create_dlg (FALSE, 0, 0, LINES, COLS, NULL, dview_dialog_callback, NULL,
+        dlg_create (FALSE, 0, 0, LINES, COLS, NULL, dview_dialog_callback, NULL,
                     "[Diff Viewer]", NULL, DLG_WANT_TAB);
 
     dview = g_new0 (WDiff, 1);
     w = WIDGET (dview);
-    init_widget (w, 0, 0, LINES - 1, COLS, dview_callback, dview_event);
+    widget_init (w, 0, 0, LINES - 1, COLS, dview_callback, dview_event);
     widget_want_cursor (w, FALSE);
 
     add_widget (dview_dlg, dview);
@@ -3470,10 +3470,10 @@ diff_view (const char *file1, const char *file2, const char *label1, const char 
      * be aware of it
      */
     if (error == 0)
-        run_dlg (dview_dlg);
+        dlg_run (dview_dlg);
 
     if ((error != 0) || (dview_dlg->state == DLG_CLOSED))
-        destroy_dlg (dview_dlg);
+        dlg_destroy (dview_dlg);
 
     return error == 0 ? 1 : 0;
 }
@@ -3618,21 +3618,11 @@ dview_diff_cmd (const void *f0, const void *f1)
 
             GET_FILE_AND_STAMP (0);
             GET_FILE_AND_STAMP (1);
-            if (real_file0 != NULL && real_file1 != NULL)
-            {
-                char *real_file0_str, *real_file1_str;
-                char *file0_str, *file1_str;
 
-                real_file0_str = vfs_path_to_str (real_file0);
-                real_file1_str = vfs_path_to_str (real_file1);
-                file0_str = vfs_path_to_str (file0);
-                file1_str = vfs_path_to_str (file1);
-                rv = diff_view (real_file0_str, real_file1_str, file0_str, file1_str);
-                g_free (real_file0_str);
-                g_free (real_file1_str);
-                g_free (file0_str);
-                g_free (file1_str);
-            }
+            if (real_file0 != NULL && real_file1 != NULL)
+                rv = diff_view (vfs_path_as_str (real_file0), vfs_path_as_str (real_file1),
+                                vfs_path_as_str (file0), vfs_path_as_str (file1));
+
             UNGET_FILE (1);
             UNGET_FILE (0);
         }

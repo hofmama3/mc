@@ -20,7 +20,6 @@ libmcfilemanager_la_SOURCES = \
 	layout.c layout.h \
 	midnight.h midnight.c \
 	mountlist.c mountlist.h \
-	option.c option.h \
 	panelize.c panelize.h \
 	panel.c panel.h \
 	tree.c tree.h \
@@ -30,6 +29,6 @@ libmcfilemanager_la_SOURCES = \
 # Unmaintained, unsupported, etc
 #	listmode.c listmode.h
 
-AM_CFLAGS = -I$(top_srcdir) $(GLIB_CFLAGS) $(PCRE_CFLAGS)
+AM_CPPFLAGS = -I$(top_srcdir) $(GLIB_CFLAGS) $(PCRE_CPPFLAGS)
 
 libmcfilemanager_la_LIBADD = ../../lib/libmc.la

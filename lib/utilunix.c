@@ -2,7 +2,7 @@
    Various utilities - Unix variants
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2007, 2011
+   2004, 2005, 2007, 2011, 2012, 2013
    The Free Software Foundation, Inc.
 
    Written by:
@@ -96,6 +96,20 @@ typedef struct
     char *string;
 } int_cache;
 
+typedef enum
+{
+    FORK_ERROR = -1,
+    FORK_CHILD,
+    FORK_PARENT,
+} my_fork_state_t;
+
+typedef struct
+{
+    struct sigaction intr;
+    struct sigaction quit;
+    struct sigaction stop;
+} my_system_sigactions_t;
+
 /*** file scope variables ************************************************************************/
 
 static int_cache uid_cache[UID_CACHE_SIZE];
@@ -130,6 +144,95 @@ i_cache_add (int id, int_cache * cache, int size, char *text, int *last)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+
+static my_fork_state_t
+my_fork (void)
+{
+    pid_t pid;
+
+    pid = fork ();
+
+    if (pid < 0)
+    {
+        fprintf (stderr, "\n\nfork () = -1\n");
+        return FORK_ERROR;
+    }
+
+    if (pid == 0)
+        return FORK_CHILD;
+
+    while (TRUE)
+    {
+        int status = 0;
+
+        if (waitpid (pid, &status, 0) > 0)
+            return WEXITSTATUS (status) == 0 ? FORK_PARENT : FORK_ERROR;
+
+        if (errno != EINTR)
+            return FORK_ERROR;
+    }
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+my_system__save_sigaction_handlers (my_system_sigactions_t * sigactions)
+{
+    struct sigaction ignore;
+
+    memset (&ignore, 0, sizeof (ignore));
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset (&ignore.sa_mask);
+
+    sigaction (SIGINT, &ignore, &sigactions->intr);
+    sigaction (SIGQUIT, &ignore, &sigactions->quit);
+
+    /* Restore the original SIGTSTP handler, we don't want ncurses' */
+    /* handler messing the screen after the SIGCONT */
+    sigaction (SIGTSTP, &startup_handler, &sigactions->stop);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+my_system__restore_sigaction_handlers (my_system_sigactions_t * sigactions)
+{
+    sigaction (SIGINT, &sigactions->intr, NULL);
+    sigaction (SIGQUIT, &sigactions->quit, NULL);
+    sigaction (SIGTSTP, &sigactions->stop, NULL);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static GPtrArray *
+my_system_make_arg_array (int flags, const char *shell, char **execute_name)
+{
+    GPtrArray *args_array;
+
+    args_array = g_ptr_array_new ();
+
+    if ((flags & EXECUTE_AS_SHELL) != 0)
+    {
+        g_ptr_array_add (args_array, g_strdup (shell));
+        g_ptr_array_add (args_array, g_strdup ("-c"));
+        *execute_name = g_strdup (shell);
+    }
+    else
+    {
+        char *shell_token;
+
+        shell_token = shell != NULL ? strchr (shell, ' ') : NULL;
+        if (shell_token == NULL)
+            *execute_name = g_strdup (shell);
+        else
+            *execute_name = g_strndup (shell, (gsize) (shell_token - shell));
+
+        g_ptr_array_add (args_array, g_strdup (shell));
+    }
+    return args_array;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /*** public functions ****************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
 
@@ -137,7 +240,6 @@ char *
 get_owner (int uid)
 {
     struct passwd *pwd;
-    static char ibuf[10];
     char *name;
     static int uid_last;
 
@@ -153,6 +255,8 @@ get_owner (int uid)
     }
     else
     {
+        static char ibuf[10];
+
         g_snprintf (ibuf, sizeof (ibuf), "%d", uid);
         return ibuf;
     }
@@ -164,7 +268,6 @@ char *
 get_group (int gid)
 {
     struct group *grp;
-    static char gbuf[10];
     char *name;
     static int gid_last;
 
@@ -180,6 +283,8 @@ get_group (int gid)
     }
     else
     {
+        static char gbuf[10];
+
         g_snprintf (gbuf, sizeof (gbuf), "%d", gid);
         return gbuf;
     }
@@ -197,87 +302,153 @@ save_stop_handler (void)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Wrapper for _exit() system call.
+ * The _exit() function has gcc's attribute 'noreturn', and this is reason why we can't
+ * mock the call.
+ *
+ * @param status exit code
+ */
+
+void
+my_exit (int status)
+{
+    _exit (status);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Call external programs.
+ *
+ * @parameter flags   addition conditions for running external programs.
+ * @parameter shell   shell (if flags contain EXECUTE_AS_SHELL), command to run otherwise.
+ *                    Shell (or command) will be found in paths described in PATH variable
+ *                    (if shell parameter doesn't begin from path delimiter)
+ * @parameter command Command for shell (or first parameter for command, if flags contain EXECUTE_AS_SHELL)
+ * @return 0 if successfull, -1 otherwise
+ */
 
 int
 my_system (int flags, const char *shell, const char *command)
 {
-    struct sigaction ignore, save_intr, save_quit, save_stop;
-    pid_t pid;
+    return my_systeml (flags, shell, command, NULL);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Call external programs with various parameters number.
+ *
+ * @parameter flags addition conditions for running external programs.
+ * @parameter shell shell (if flags contain EXECUTE_AS_SHELL), command to run otherwise.
+ *                  Shell (or command) will be found in pathes described in PATH variable
+ *                  (if shell parameter doesn't begin from path delimiter)
+ * @parameter ...   Command for shell with addition parameters for shell
+ *                  (or parameters for command, if flags contain EXECUTE_AS_SHELL).
+ *                  Should be NULL terminated.
+ * @return 0 if successfull, -1 otherwise
+ */
+
+
+int
+my_systeml (int flags, const char *shell, ...)
+{
+    GPtrArray *args_array;
     int status = 0;
+    va_list vargs;
+    char *one_arg;
 
-    ignore.sa_handler = SIG_IGN;
-    sigemptyset (&ignore.sa_mask);
-    ignore.sa_flags = 0;
+    args_array = g_ptr_array_new ();
 
-    sigaction (SIGINT, &ignore, &save_intr);
-    sigaction (SIGQUIT, &ignore, &save_quit);
+    va_start (vargs, shell);
+    while ((one_arg = va_arg (vargs, char *)) != NULL)
+          g_ptr_array_add (args_array, one_arg);
+    va_end (vargs);
 
-    /* Restore the original SIGTSTP handler, we don't want ncurses' */
-    /* handler messing the screen after the SIGCONT */
-    sigaction (SIGTSTP, &startup_handler, &save_stop);
+    g_ptr_array_add (args_array, NULL);
+    status = my_systemv_flags (flags, shell, (char *const *) args_array->pdata);
 
-    pid = fork ();
-    if (pid < 0)
-    {
-        fprintf (stderr, "\n\nfork () = -1\n");
-        status = -1;
-    }
-    else if (pid == 0)
-    {
-        signal (SIGINT, SIG_DFL);
-        signal (SIGQUIT, SIG_DFL);
-        signal (SIGTSTP, SIG_DFL);
-        signal (SIGCHLD, SIG_DFL);
-
-        if (flags & EXECUTE_AS_SHELL)
-            execl (shell, shell, "-c", command, (char *) NULL);
-        else
-        {
-            gchar **shell_tokens;
-            const gchar *only_cmd;
-
-            shell_tokens = g_strsplit (shell, " ", 2);
-            if (shell_tokens == NULL)
-                only_cmd = shell;
-            else
-                only_cmd = (*shell_tokens != NULL) ? *shell_tokens : shell;
-
-            execlp (only_cmd, shell, command, (char *) NULL);
-
-            /*
-               execlp will replace current process,
-               therefore no sence in call of g_strfreev().
-               But this keeped for estetic reason :)
-             */
-            g_strfreev (shell_tokens);
-
-        }
-
-        _exit (127);            /* Exec error */
-    }
-    else
-    {
-        while (TRUE)
-        {
-            if (waitpid (pid, &status, 0) > 0)
-            {
-                status = WEXITSTATUS (status);
-                break;
-            }
-            if (errno != EINTR)
-            {
-                status = -1;
-                break;
-            }
-        }
-    }
-    sigaction (SIGINT, &save_intr, NULL);
-    sigaction (SIGQUIT, &save_quit, NULL);
-    sigaction (SIGTSTP, &save_stop, NULL);
+    g_ptr_array_free (args_array, TRUE);
 
     return status;
 }
 
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Call external programs with array of strings as parameters.
+ *
+ * @parameter command command to run. Command will be found in paths described in PATH variable
+ *                    (if command parameter doesn't begin from path delimiter)
+ * @parameter argv    Array of strings (NULL-terminated) with parameters for command
+ * @return 0 if successfull, -1 otherwise
+ */
+
+int
+my_systemv (const char *command, char *const argv[])
+{
+    my_fork_state_t fork_state;
+    int status = 0;
+    my_system_sigactions_t sigactions;
+
+    my_system__save_sigaction_handlers (&sigactions);
+
+    fork_state = my_fork ();
+    switch (fork_state)
+    {
+    case FORK_ERROR:
+        status = -1;
+        break;
+    case FORK_CHILD:
+        {
+            signal (SIGINT, SIG_DFL);
+            signal (SIGQUIT, SIG_DFL);
+            signal (SIGTSTP, SIG_DFL);
+            signal (SIGCHLD, SIG_DFL);
+
+            execvp (command, argv);
+            my_exit (127);      /* Exec error */
+        }
+        break;
+    default:
+        status = 0;
+        break;
+    }
+    my_system__restore_sigaction_handlers (&sigactions);
+
+    return status;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Call external programs with flags and with array of strings as parameters.
+ *
+ * @parameter flags   addition conditions for running external programs.
+ * @parameter command shell (if flags contain EXECUTE_AS_SHELL), command to run otherwise.
+ *                    Shell (or command) will be found in paths described in PATH variable
+ *                    (if shell parameter doesn't begin from path delimiter)
+ * @parameter argv    Array of strings (NULL-terminated) with parameters for command
+ * @return 0 if successfull, -1 otherwise
+ */
+
+int
+my_systemv_flags (int flags, const char *command, char *const argv[])
+{
+    char *execute_name = NULL;
+    GPtrArray *args_array;
+    int status = 0;
+
+    args_array = my_system_make_arg_array (flags, command, &execute_name);
+
+    for (; argv != NULL && *argv != NULL; argv++)
+        g_ptr_array_add (args_array, *argv);
+
+    g_ptr_array_add (args_array, NULL);
+    status = my_systemv (execute_name, (char *const *) args_array->pdata);
+
+    g_free (execute_name);
+    g_ptr_array_free (args_array, TRUE);
+
+    return status;
+}
 
 /* --------------------------------------------------------------------------------------------- */
 
@@ -294,7 +465,6 @@ tilde_expand (const char *directory)
 {
     struct passwd *passwd;
     const char *p, *q;
-    char *name;
 
     if (*directory != '~')
         return g_strdup (directory);
@@ -316,6 +486,8 @@ tilde_expand (const char *directory)
         }
         else
         {
+            char *name;
+
             name = g_strndup (p, q - p);
             passwd = getpwnam (name);
             q++;
@@ -443,10 +615,10 @@ close_error_pipe (int error, const char *text)
 /**
  * Canonicalize path, and return a new path.  Do everything in place.
  * The new path differs from path in:
- *      Multiple `/'s are collapsed to a single `/'.
- *      Leading `./'s and trailing `/.'s are removed.
- *      Trailing `/'s are removed.
- *      Non-leading `../'s and trailing `..'s are handled by removing
+ *      Multiple '/'s are collapsed to a single '/'.
+ *      Leading './'s and trailing '/.'s are removed.
+ *      Trailing '/'s are removed.
+ *      Non-leading '../'s and trailing '..'s are handled by removing
  *      portions of the path.
  * Well formed UNC paths are modified only in the local part.
  */
@@ -455,7 +627,6 @@ void
 custom_canonicalize_pathname (char *path, CANON_PATH_FLAGS flags)
 {
     char *p, *s;
-    size_t len;
     char *lpath = path;         /* path without leading UNC part */
     const size_t url_delim_len = strlen (VFS_PATH_URL_DELIMITER);
 
@@ -503,6 +674,8 @@ custom_canonicalize_pathname (char *path, CANON_PATH_FLAGS flags)
 
     if (flags & CANON_PATH_REMSLASHDOTS)
     {
+        size_t len;
+
         /* Remove trailing slashes */
         p = lpath + strlen (lpath) - 1;
         while (p > lpath && *p == PATH_SEP)
@@ -675,7 +848,7 @@ custom_canonicalize_pathname (char *path, CANON_PATH_FLAGS flags)
                     while (p >= lpath && *p != PATH_SEP)
                         p--;
 
-                    if (p != NULL)
+                    if (p >= lpath)
                         continue;
                 }
 #endif /* HAVE_CHARSET */
@@ -687,7 +860,6 @@ custom_canonicalize_pathname (char *path, CANON_PATH_FLAGS flags)
                     else
                         s[-1] = '\0';
                 }
-                break;
             }
 
             break;

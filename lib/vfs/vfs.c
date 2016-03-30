@@ -2,12 +2,13 @@
    Virtual File System switch code
 
    Copyright (C) 1995, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2007, 2011
+   2007, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by: 1995 Miguel de Icaza
    Jakub Jelinek, 1995
    Pavel Machek, 1998
+   Slava Zanko <slavazanko@gmail.com>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -43,6 +44,7 @@
 #include <config.h>
 
 #include <errno.h>
+#include <stdlib.h>
 
 #include "lib/global.h"
 #include "lib/strutil.h"
@@ -112,7 +114,6 @@ _vfs_translate_path (const char *path, int size, GIConv defcnv, GString * buffer
     estr_t state = ESTR_SUCCESS;
 #ifdef HAVE_CHARSET
     const char *semi;
-    const char *slash;
 
     if (size == 0)
         return ESTR_SUCCESS;
@@ -124,6 +125,7 @@ _vfs_translate_path (const char *path, int size, GIConv defcnv, GString * buffer
     if (semi != NULL && (semi == path || *(semi - 1) == PATH_SEP))
     {
         char encoding[16];
+        const char *slash;
         GIConv coder = INVALID_CONV;
         int ms;
 
@@ -335,17 +337,13 @@ vfs_strip_suffix_from_filename (const char *filename)
 
 /* --------------------------------------------------------------------------------------------- */
 
-char *
+const char *
 vfs_translate_path (const char *path)
 {
     estr_t state;
 
     g_string_set_size (vfs_str_buffer, 0);
     state = _vfs_translate_path (path, -1, str_cnv_from_term, vfs_str_buffer);
-    /*
-       strict version
-       return (state == 0) ? vfs_str_buffer->data : NULL;
-     */
     return (state != ESTR_FAILURE) ? vfs_str_buffer->str : NULL;
 }
 
@@ -354,10 +352,10 @@ vfs_translate_path (const char *path)
 char *
 vfs_translate_path_n (const char *path)
 {
-    char *result;
+    const char *result;
 
     result = vfs_translate_path (path);
-    return (result != NULL) ? g_strdup (result) : NULL;
+    return g_strdup (result);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -370,7 +368,7 @@ vfs_translate_path_n (const char *path)
 char *
 vfs_get_current_dir (void)
 {
-    return vfs_path_to_str (current_path);
+    return g_strdup (current_path->str);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -532,24 +530,37 @@ vfs_print_message (const char *msg, ...)
 void
 vfs_setup_cwd (void)
 {
+    char *current_dir;
+    vfs_path_t *tmp_vpath;
     const vfs_path_element_t *path_element;
 
     if (vfs_get_raw_current_dir () == NULL)
     {
-        char *tmp;
+        current_dir = g_get_current_dir ();
+        vfs_set_raw_current_dir (vfs_path_from_str (current_dir));
+        g_free (current_dir);
 
-        tmp = g_get_current_dir ();
-        vfs_set_raw_current_dir (vfs_path_from_str (tmp));
-        g_free (tmp);
+        current_dir = getenv ("PWD");
+        tmp_vpath = vfs_path_from_str (current_dir);
+
+        if (tmp_vpath != NULL)
+        {
+            struct stat my_stat, my_stat2;
+
+            if (mc_global.vfs.cd_symlinks
+                && mc_stat (tmp_vpath, &my_stat) == 0
+                && mc_stat (vfs_get_raw_current_dir (), &my_stat2) == 0
+                && my_stat.st_ino == my_stat2.st_ino && my_stat.st_dev == my_stat2.st_dev)
+                vfs_set_raw_current_dir (tmp_vpath);
+            else
+                vfs_path_free (tmp_vpath);
+        }
     }
 
     path_element = vfs_path_get_by_index (vfs_get_raw_current_dir (), -1);
 
     if ((path_element->class->flags & VFSF_LOCAL) != 0)
     {
-        char *current_dir;
-        vfs_path_t *tmp_vpath;
-
         current_dir = g_get_current_dir ();
         tmp_vpath = vfs_path_from_str (current_dir);
         g_free (current_dir);
@@ -579,45 +590,14 @@ vfs_setup_cwd (void)
 char *
 _vfs_get_cwd (void)
 {
+    const vfs_path_t *current_dir_vpath;
+
     vfs_setup_cwd ();
-    return vfs_path_to_str (vfs_get_raw_current_dir ());
+    current_dir_vpath = vfs_get_raw_current_dir ();
+    return g_strdup (vfs_path_as_str (current_dir_vpath));
 }
 
 /* --------------------------------------------------------------------------------------------- */
-
-#ifdef HAVE_CHARSET
-/**
- * Change encoding for last part (vfs_path_element_t) of vpath
- *
- * @param vpath pointer to path structure
- * encoding name of charset
- *
- * @return pointer to path structure (for use function in anoter functions)
- */
-vfs_path_t *
-vfs_change_encoding (vfs_path_t * vpath, const char *encoding)
-{
-    vfs_path_element_t *path_element;
-
-    path_element = (vfs_path_element_t *) vfs_path_get_by_index (vpath, -1);
-    /* don't add current encoding */
-    if ((path_element->encoding != NULL) && (strcmp (encoding, path_element->encoding) == 0))
-        return vpath;
-
-    g_free (path_element->encoding);
-    path_element->encoding = g_strdup (encoding);
-
-    if (vfs_path_element_need_cleanup_converter (path_element))
-        str_close_conv (path_element->dir.converter);
-
-    path_element->dir.converter = str_crt_conv_from (path_element->encoding);
-
-    return vpath;
-}
-#endif /* HAVE_CHARSET */
-
-/* --------------------------------------------------------------------------------------------- */
-
 /**
  * Preallocate space for file in new place for ensure that file
  * will be fully copied with less fragmentation.

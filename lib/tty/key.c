@@ -2,7 +2,7 @@
    Keyboard support routines.
 
    Copyright (C) 1994, 1995, 1998, 1999, 2000, 2001, 2002, 2003, 2004,
-   2005, 2006, 2007, 2009, 2010, 2011
+   2005, 2006, 2007, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
@@ -10,6 +10,9 @@
    Janne Kukonlehto, 1994, 1995
    Jakub Jelinek, 1995
    Norbert Warmuth, 1997
+   Denys Vlasenko <vda.linux@googlemail.com>, 2013
+   Slava Zanko <slavazanko@gmail.com>, 2013
+   Egmont Koblinger <egmont@gmail.com>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -89,6 +92,8 @@ int old_esc_mode = 0;
 /* timeout for old_esc_mode in usec */
 int old_esc_mode_timeout = 1000000;     /* settable via env */
 int use_8th_bit_as_meta = 0;
+
+gboolean bracketed_pasting_in_progress = FALSE;
 
 /* This table is a mapping between names and the constants we use
  * We use this to allow users to define alternate definitions for
@@ -273,6 +278,8 @@ typedef int (*ph_pqc_f) (unsigned short, PhCursorInfo_t *);
 static key_define_t mc_default_keys[] = {
     {ESC_CHAR, ESC_STR, MCKEY_ESCAPE},
     {ESC_CHAR, ESC_STR ESC_STR, MCKEY_NOACTION},
+    {MCKEY_BRACKETED_PASTING_START, ESC_STR "[200~", MCKEY_NOACTION},
+    {MCKEY_BRACKETED_PASTING_END, ESC_STR "[201~", MCKEY_NOACTION},
     {0, NULL, MCKEY_NOACTION},
 };
 
@@ -324,6 +331,7 @@ static key_define_t xterm_key_defines[] = {
     {KEY_M_SHIFT | KEY_M_CTRL | KEY_DOWN, ESC_STR "[1;6B", MCKEY_NOACTION},
     {KEY_M_SHIFT | KEY_M_CTRL | KEY_RIGHT, ESC_STR "[1;6C", MCKEY_NOACTION},
     {KEY_M_SHIFT | KEY_M_CTRL | KEY_LEFT, ESC_STR "[1;6D", MCKEY_NOACTION},
+    {KEY_M_SHIFT | '\t', ESC_STR "[Z", MCKEY_NOACTION},
 
     /* putty */
     {KEY_M_SHIFT | KEY_M_CTRL | KEY_UP, ESC_STR "[[1;6A", MCKEY_NOACTION},
@@ -521,8 +529,6 @@ static int *seq_append = NULL;
 
 static int *pending_keys = NULL;
 
-static int mouse_btn, mouse_x, mouse_y;
-
 #ifdef __QNXNTO__
 ph_dv_f ph_attach;
 ph_ov_f ph_input_group;
@@ -600,17 +606,16 @@ try_channels (int set_timeout)
 {
     struct timeval time_out;
     static fd_set select_set;
-    struct timeval *timeptr;
-    int v;
-    int maxfdp;
 
     while (1)
     {
+        struct timeval *timeptr = NULL;
+        int maxfdp, v;
+
         FD_ZERO (&select_set);
         FD_SET (input_fd, &select_set); /* Add stdin */
         maxfdp = max (add_selects (&select_set), input_fd);
 
-        timeptr = NULL;
         if (set_timeout)
         {
             time_out.tv_sec = 0;
@@ -711,15 +716,62 @@ getch_with_delay (void)
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-xmouse_get_event (Gpm_Event * ev)
+xmouse_get_event (Gpm_Event * ev, gboolean extended)
 {
     static struct timeval tv1 = { 0, 0 };       /* Force first click as single */
     static struct timeval tv2;
     static int clicks = 0;
     static int last_btn = 0;
-    int btn = mouse_btn;
+    int btn;
 
     /* Decode Xterm mouse information to a GPM style event */
+
+    if (!extended)
+    {
+        /* Variable btn has following meaning: */
+        /* 0 = btn1 dn, 1 = btn2 dn, 2 = btn3 dn, 3 = btn up */
+        btn = tty_lowlevel_getch () - 32;
+        /* Coordinates are 33-based */
+        /* Transform them to 1-based */
+        ev->x = tty_lowlevel_getch () - 32;
+        ev->y = tty_lowlevel_getch () - 32;
+    }
+    else
+    {
+        /* SGR 1006 extension (e.g. "\e[<0;12;300M"):
+           - Numbers are encoded in decimal to make it ASCII-safe
+           and to overcome the limit of 223 columns/rows.
+           - Mouse release is encoded by trailing 'm' rather than 'M'
+           so that the released button can be reported.
+           - Numbers are no longer offset by 32. */
+        char c;
+        btn = ev->x = ev->y = 0;
+        ev->type = 0;           /* In case we return on an invalid sequence */
+        while ((c = tty_lowlevel_getch ()) != ';')
+        {
+            if (c < '0' || c > '9')
+                return;
+            btn = 10 * btn + (c - '0');
+        }
+        while ((c = tty_lowlevel_getch ()) != ';')
+        {
+            if (c < '0' || c > '9')
+                return;
+            ev->x = 10 * ev->x + (c - '0');
+        }
+        while ((c = tty_lowlevel_getch ()) != 'M' && c != 'm')
+        {
+            if (c < '0' || c > '9')
+                return;
+            ev->y = 10 * ev->y + (c - '0');
+        }
+        /* Legacy mouse protocol doesn't tell which button was released,
+           conveniently all of mc's widgets are written not to rely on this
+           information. With the SGR extension the released button becomes
+           known, but for the sake of simplicity we just ignore it. */
+        if (c == 'm')
+            btn = 3;
+    }
 
     /* There seems to be no way of knowing which button was released */
     /* So we assume all the buttons were released */
@@ -798,8 +850,6 @@ xmouse_get_event (Gpm_Event * ev)
         }
         last_btn = ev->buttons;
     }
-    ev->x = mouse_x;
-    ev->y = mouse_y;
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -816,7 +866,7 @@ get_modifier (void)
 {
     int result = 0;
 #ifdef __QNXNTO__
-    int mod_status, shift_ext_status;
+    int mod_status;
     static int in_photon = 0;
     static int ph_ig = 0;
     PhCursorInfo_t cursor_info;
@@ -871,6 +921,8 @@ get_modifier (void)
        console or xterm */
     if (in_photon == -1)
     {
+        int shift_ext_status;
+
         if (devctl (fileno (stdin), DCMD_CHR_LINESTATUS, &mod_status, sizeof (int), NULL) == -1)
             return 0;
         shift_ext_status = mod_status & 0xffffff00UL;
@@ -934,136 +986,6 @@ push_char (int c)
 }
 
 /* --------------------------------------------------------------------------------------------- */
-/* Parse extended mouse coordinates.
-   Returns -1 if pending_keys (up to seq_append) cannot be a prefix of extended mouse coordinates.
-   Returns 0 if pending_keys (up to seq_append) is a valid (but still incomplete) prefix for
-   extended mouse coordinates, e.g. "^[[32;4".
-   Returns 1 and fills the mouse_btn, mouse_x, mouse_y values if pending_keys (up to seq_append) is
-   a complete extended mouse sequence, e.g. "^[[32;42;5M"
- */
-
-/* Technical info (Egmont Koblinger <egmont@gmail.com>):
-
-   The ancient way of reporting mouse coordinates only supports coordinates up to 223,
-   so if your terminal is wider (or taller, but that's unlikely), you cannot use your mouse
-   in the rightmost columns.
-
-   * The old way of reporting mouse coordinates is the following:
-   + Output DECSET 1000 to enable mouse
-   + Expect escape sequences in the format \e[M<action+32><x+32><y+32> whereas <action+32>,
-   <x+32> and <y+32> are single bytes. (Action is 0 for left click, 1 for middle click,
-   2 for right click, 3 for release, or something like this.)
-   + Disadvantages of this format:
-   + x and y can only go up to 223.
-   + Coordinates above 95 are not ascii-compatible, so any character set converting
-   layer (e.g. luit) messes them up.
-   + The stream is not valid UTF-8, even if everything else is.
-
-   * The first new extension, introduced by xterm-262, is the following:
-   + Output DECSET 1000 to enable mouse, followed by DECSET 1005 to activate extended mode.
-   + Expect escape sequences in the format \e[M<action+32><<x+32>><<y+32>> whereas <<x+32>>
-   and <<y+32>> each can be up to two bytes long: coordinate+32 is encoded in UTF-8.
-   + Disadvantates of this format:
-   + There's still a limit of 2015 rows/columns (okay, it's not a real life problem).
-   + Doesn't solve the luit issue.
-   + It is "horribly broken" (quoting urxvt's changelog) in terms of compatibility
-   with the previous standard. There is no way for an application to tell whether
-   the underlying terminal supports this new mode (whether DECSET 1005 did actually change
-   the behavior or not), but depending on this a completely different user action might
-   generate the same input. Example:
-   + If the terminal doesn't support this extension, then clicking at (162, 129)
-   generates \e[M<32><194><161>.
-   + If the terminal supports this extension, then clicking at (129, 1) [bit of math:
-   129+32 = 161, U+0161 in UTF-8 is 194 161] generates \e[M<32><194><161><33>.
-   + so there's no way to tell whether the terminal ignored the 1005 escape sequence,
-   the user clicked on (162, 129) and then typed an exclamation mark; or whether
-   the terminal recognized the escape, and the user clicked on (129, 1).
-   + Due to this horrible brokenness, there's no way to implement support it without
-   explicitly asking the user (via a setting) if the terminal can speak this extension.
-
-   * The second new extension, introduced by rxvt-unicode-9.10, is the following:
-   + Output DECSET 1000 to enable mouse, followed by DECSET 1015 to activate this extended mode.
-   + Expect escape sequences in the format \e[{action+32};{x};{y}M where this time I used
-   the braces to denote spelling out the numbers in decimal, rather than using raw bytes.
-   + The only thing I don't understand is why they kept the offset of 32 at action, but other
-   than that, this format is totally okay, and solves all the weaknesses of the previous ones.
-
-   Currently, at least the following terminal emulators have support for these:
-   * xterm supports the xterm extension
-   * rxvt-unicode >= 9.10 supports both extensions
-   * iterm2 supports both extensions
-   * vte >= 0.31 supports the urxvt extension
- */
-
-static int
-parse_extended_mouse_coordinates (void)
-{
-    int c, btn = 0, x = 0, y = 0;
-    const int *p = pending_keys;
-    const int *endp = seq_append;
-
-    if (p == endp)
-        return 0;
-    c = *p++;
-    if (c != ESC_CHAR)
-        return -1;
-
-    if (p == endp)
-        return 0;
-    c = *p++;
-    if (c != '[')
-        return -1;
-
-    while (TRUE)
-    {
-        if (p == endp)
-            return 0;
-        c = *p++;
-        if (c == ';')
-            break;
-        if (c < '0' || c > '9')
-            return -1;
-        btn = 10 * btn + c - '0';
-    }
-    if (btn < 32)
-        return -1;
-    btn -= 32;
-
-    while (TRUE)
-    {
-        if (p == endp)
-            return 0;
-        c = *p++;
-        if (c == ';')
-            break;
-        if (c < '0' || c > '9')
-            return -1;
-        x = 10 * x + c - '0';
-    }
-    if (x < 1)
-        return -1;
-
-    while (TRUE)
-    {
-        if (p == endp)
-            return 0;
-        c = *p++;
-        if (c == 'M')
-            break;
-        if (c < '0' || c > '9')
-            return -1;
-        y = 10 * y + c - '0';
-    }
-    if (y < 1)
-        return -1;
-
-    mouse_btn = btn;
-    mouse_x = x;
-    mouse_y = y;
-    return 1;
-}
-
-/* --------------------------------------------------------------------------------------------- */
 /* Apply corrections for the keycode generated in get_key_code() */
 
 static int
@@ -1093,18 +1015,11 @@ correct_key_code (int code)
     if (c == KEY_SCANCEL)
         c = '\t';
 
-    /* Convert Shift+Tab and Ctrl+Tab to Back Tab
-     * only if modifiers directly from X11
-     */
-#ifdef HAVE_TEXTMODE_X11_SUPPORT
-    if (x11_window != 0)
-#endif /* HAVE_TEXTMODE_X11_SUPPORT */
+    /* Convert Back Tab to Shift+Tab */
+    if (c == KEY_BTAB)
     {
-        if ((c == '\t') && (mod & (KEY_M_SHIFT | KEY_M_CTRL)))
-        {
-            c = KEY_BTAB;
-            mod = 0;
-        }
+        c = '\t';
+        mod = KEY_M_SHIFT;
     }
 
     /* F0 is the same as F10 for out purposes */
@@ -1216,14 +1131,14 @@ correct_key_code (int code)
 /* --------------------------------------------------------------------------------------------- */
 
 static int
-xgetch_second (void)
+getch_with_timeout (unsigned int delay_us)
 {
     fd_set Read_FD_Set;
     int c;
     struct timeval time_out;
 
-    time_out.tv_sec = old_esc_mode_timeout / 1000000;
-    time_out.tv_usec = old_esc_mode_timeout % 1000000;
+    time_out.tv_sec = delay_us / 1000000u;
+    time_out.tv_usec = delay_us % 1000000u;
     tty_nodelay (TRUE);
     FD_ZERO (&Read_FD_Set);
     FD_SET (input_fd, &Read_FD_Set);
@@ -1411,7 +1326,7 @@ init_key (void)
         || (term != NULL
             && (strncmp (term, "iris-ansi", 9) == 0
                 || strncmp (term, "xterm", 5) == 0
-                || strncmp (term, "rxvt", 4) == 0 || strcmp (term, "screen") == 0)))
+                || strncmp (term, "rxvt", 4) == 0 || strncmp (term, "screen", 6) == 0)))
         define_sequences (xterm_key_defines);
 
     /* load some additional keys (e.g. direct Alt-? support) */
@@ -1557,10 +1472,10 @@ lookup_key (const char *name, char **label)
         return 0;
 
     name = g_strstrip (g_strdup (name));
-    p = lc_keys = g_strsplit_set (name, "-+ ", -1);
+    lc_keys = g_strsplit_set (name, "-+ ", -1);
     g_free ((char *) name);
 
-    while ((p != NULL) && (*p != NULL))
+    for (p = lc_keys; p != NULL && *p != NULL; p++)
     {
         if ((*p)[0] != '\0')
         {
@@ -1581,8 +1496,6 @@ lookup_key (const char *name, char **label)
                 break;
             }
         }
-
-        p++;
     }
 
     g_strfreev (lc_keys);
@@ -1590,7 +1503,6 @@ lookup_key (const char *name, char **label)
     /* output */
     if (k <= 0)
         return 0;
-
 
     if (label != NULL)
     {
@@ -1666,9 +1578,6 @@ lookup_key_by_code (const int keycode)
     /* modifier */
     unsigned int mod = keycode & KEY_M_MASK;
 
-    int use_meta = -1;
-    int use_ctrl = -1;
-    int use_shift = -1;
     int key_idx = -1;
 
     GString *s;
@@ -1682,8 +1591,7 @@ lookup_key_by_code (const int keycode)
         {
             if (lookup_keycode (KEY_M_ALT, &idx))
             {
-                use_meta = idx;
-                g_string_append (s, key_conv_tab_sorted[use_meta]->name);
+                g_string_append (s, key_conv_tab_sorted[idx]->name);
                 g_string_append_c (s, '-');
             }
         }
@@ -1695,8 +1603,7 @@ lookup_key_by_code (const int keycode)
 
             if (lookup_keycode (KEY_M_CTRL, &idx))
             {
-                use_ctrl = idx;
-                g_string_append (s, key_conv_tab_sorted[use_ctrl]->name);
+                g_string_append (s, key_conv_tab_sorted[idx]->name);
                 g_string_append_c (s, '-');
             }
         }
@@ -1704,12 +1611,11 @@ lookup_key_by_code (const int keycode)
         {
             if (lookup_keycode (KEY_M_ALT, &idx))
             {
-                use_shift = idx;
                 if (k < 127)
                     g_string_append_c (s, (gchar) g_ascii_toupper ((gchar) k));
                 else
                 {
-                    g_string_append (s, key_conv_tab_sorted[use_shift]->name);
+                    g_string_append (s, key_conv_tab_sorted[idx]->name);
                     g_string_append_c (s, '-');
                     g_string_append (s, key_conv_tab_sorted[key_idx]->name);
                 }
@@ -1793,23 +1699,41 @@ define_sequence (int code, const char *seq, int action)
 gboolean
 is_idle (void)
 {
-    int maxfdp;
+    int nfd;
     fd_set select_set;
     struct timeval time_out;
 
     FD_ZERO (&select_set);
     FD_SET (input_fd, &select_set);
-    maxfdp = input_fd;
-#ifdef HAVE_LIBGPM
-    if (mouse_enabled && (use_mouse_p == MOUSE_GPM) && (gpm_fd > 0))
-    {
-        FD_SET (gpm_fd, &select_set);
-        maxfdp = max (maxfdp, gpm_fd);
-    }
-#endif
+    nfd = max (0, input_fd) + 1;
     time_out.tv_sec = 0;
     time_out.tv_usec = 0;
-    return (select (maxfdp + 1, &select_set, 0, 0, &time_out) <= 0);
+#ifdef HAVE_LIBGPM
+    if (mouse_enabled && use_mouse_p == MOUSE_GPM)
+    {
+        if (gpm_fd >= 0)
+        {
+            FD_SET (gpm_fd, &select_set);
+            nfd = max (nfd, gpm_fd + 1);
+        }
+        else
+        {
+            if (mouse_fd >= 0)  /* error indicative */
+            {
+                if (FD_ISSET (mouse_fd, &select_set))
+                    FD_CLR (mouse_fd, &select_set);
+                mouse_fd = gpm_fd;
+            }
+            /* gpm_fd == -2 means under some X terminal */
+            if (gpm_fd == -1)
+            {
+                mouse_enabled = FALSE;
+                use_mouse_p = MOUSE_NONE;
+            }
+        }
+    }
+#endif
+    return (select (nfd, &select_set, 0, 0, &time_out) <= 0);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -1831,35 +1755,37 @@ get_key_code (int no_delay)
   pend_send:
     if (pending_keys != NULL)
     {
-        int m;
+        int d;
+        gboolean bad_seq;
 
-        m = parse_extended_mouse_coordinates ();
-        if (m == 1)
-        {
+        d = *pending_keys++;
+        while (d == ESC_CHAR)
+            d = ALT (*pending_keys++);
+
+        bad_seq = (*pending_keys != ESC_CHAR && *pending_keys != 0);
+        if (*pending_keys == '\0' || bad_seq)
             pending_keys = seq_append = NULL;
-            this = NULL;
-            return MCKEY_EXTENDED_MOUSE;
-        }
-        if (m == -1)
+
+        if (bad_seq)
         {
-            int d = *pending_keys++;
-          check_pend:
-            if (*pending_keys == 0)
-            {
-                pending_keys = NULL;
-                seq_append = NULL;
-            }
-            if ((d == ESC_CHAR) && (pending_keys != NULL))
-            {
-                d = ALT (*pending_keys++);
-                goto check_pend;
-            }
-            if ((d > 127 && d < 256) && use_8th_bit_as_meta)
-                d = ALT (d & 0x7f);
-            this = NULL;
-            return correct_key_code (d);
+            /* This is an unknown ESC sequence.
+             * To prevent interpreting its tail as a random garbage,
+             * eat and discard all buffered and quickly following chars.
+             * Small, but non-zero timeout is needed to reconnect
+             * escape sequence split up by e.g. a serial line.
+             */
+            int paranoia = 20;
+
+            while (getch_with_timeout (old_esc_mode_timeout) >= 0 && --paranoia != 0)
+                ;
+            goto nodelay_try_again;
         }
-        /* else if (m == 0), just let it continue */
+
+        if (d > 127 && d < 256 && use_8th_bit_as_meta)
+            d = ALT (d & 0x7f);
+
+        this = NULL;
+        return correct_key_code (d);
     }
 
   nodelay_try_again:
@@ -1930,49 +1856,12 @@ get_key_code (int no_delay)
             this = keys->child;
         }
     }
+
     while (this != NULL)
     {
         if (c == this->ch)
         {
-            if (this->child)
-            {
-                if (!push_char (c))
-                {
-                    pending_keys = seq_buffer;
-                    goto pend_send;
-                }
-                parent = this;
-                this = this->child;
-                if (parent->action == MCKEY_ESCAPE && old_esc_mode)
-                {
-                    if (no_delay)
-                    {
-                        GET_TIME (esctime);
-                        if (this == NULL)
-                        {
-                            /* Shouldn't happen */
-                            fputs ("Internal error\n", stderr);
-                            exit (EXIT_FAILURE);
-                        }
-                        goto nodelay_try_again;
-                    }
-                    esctime.tv_sec = -1;
-                    c = xgetch_second ();
-                    if (c == -1)
-                    {
-                        pending_keys = seq_append = NULL;
-                        this = NULL;
-                        return ESC_CHAR;
-                    }
-                }
-                else
-                {
-                    if (no_delay)
-                        goto nodelay_try_again;
-                    c = tty_lowlevel_getch ();
-                }
-            }
-            else
+            if (this->child == NULL)
             {
                 /* We got a complete match, return and reset search */
                 int code;
@@ -1982,36 +1871,67 @@ get_key_code (int no_delay)
                 this = NULL;
                 return correct_key_code (code);
             }
-        }
-        else
-        {
-            if (this->next != NULL)
-                this = this->next;
-            else
+            /* No match yet, but it may be a prefix for a valid seq */
+            if (!push_char (c))
             {
-                if ((parent != NULL) && (parent->action == MCKEY_ESCAPE))
-                {
-                    /* Convert escape-digits to F-keys */
-                    if (g_ascii_isdigit (c))
-                        c = KEY_F (c - '0');
-                    else if (c == ' ')
-                        c = ESC_CHAR;
-                    else
-                        c = ALT (c);
-
-                    pending_keys = seq_append = NULL;
-                    this = NULL;
-                    return correct_key_code (c);
-                }
-                /* Did not find a match or {c} was changed in the if above,
-                   so we have to return everything we had skipped
-                 */
-                push_char (c);
                 pending_keys = seq_buffer;
                 goto pend_send;
             }
+            parent = this;
+            this = this->child;
+            if (parent->action == MCKEY_ESCAPE && old_esc_mode)
+            {
+                if (no_delay)
+                {
+                    GET_TIME (esctime);
+                    goto nodelay_try_again;
+                }
+                esctime.tv_sec = -1;
+                c = getch_with_timeout (old_esc_mode_timeout);
+                if (c == -1)
+                {
+                    pending_keys = seq_append = NULL;
+                    this = NULL;
+                    return ESC_CHAR;
+                }
+                continue;
+            }
+            if (no_delay)
+                goto nodelay_try_again;
+            c = tty_lowlevel_getch ();
+            continue;
         }
-    }
+
+        /* c != this->ch. Try other keys with this prefix */
+        if (this->next != NULL)
+        {
+            this = this->next;
+            continue;
+        }
+
+        /* No match found. Is it one of our ESC <key> specials? */
+        if ((parent != NULL) && (parent->action == MCKEY_ESCAPE))
+        {
+            /* Convert escape-digits to F-keys */
+            if (g_ascii_isdigit (c))
+                c = KEY_F (c - '0');
+            else if (c == ' ')
+                c = ESC_CHAR;
+            else
+                c = ALT (c);
+
+            pending_keys = seq_append = NULL;
+            this = NULL;
+            return correct_key_code (c);
+        }
+
+        /* Unknown sequence. Maybe a prefix of a longer one. Save it. */
+        push_char (c);
+        pending_keys = seq_buffer;
+        goto pend_send;
+
+    }                           /* while (this != NULL) */
+
     this = NULL;
     return correct_key_code (c);
 }
@@ -2026,7 +1946,7 @@ int
 tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
 {
     int c;
-    static int flag = 0;        /* Return value from select */
+    int flag = 0;               /* Return value from select */
 #ifdef HAVE_LIBGPM
     static struct Gpm_Event ev; /* Mouse event */
 #endif
@@ -2058,26 +1978,37 @@ tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
     /* Repeat if using mouse */
     while (pending_keys == NULL)
     {
-        int maxfdp;
+        int nfd;
         fd_set select_set;
 
         FD_ZERO (&select_set);
         FD_SET (input_fd, &select_set);
-        maxfdp = max (add_selects (&select_set), input_fd);
+        nfd = max (add_selects (&select_set), max (0, input_fd)) + 1;
 
 #ifdef HAVE_LIBGPM
         if (mouse_enabled && (use_mouse_p == MOUSE_GPM))
         {
-            if (gpm_fd < 0)
+            if (gpm_fd >= 0)
             {
-                /* Connection to gpm broken, possibly gpm has died */
-                mouse_enabled = FALSE;
-                use_mouse_p = MOUSE_NONE;
+                FD_SET (gpm_fd, &select_set);
+                nfd = max (nfd, gpm_fd + 1);
+            }
+            else
+            {
+                if (mouse_fd >= 0)      /* error indicative */
+                {
+                    if (FD_ISSET (mouse_fd, &select_set))
+                        FD_CLR (mouse_fd, &select_set);
+                    mouse_fd = gpm_fd;
+                }
+                /* gpm_fd == -2 means under some X terminal */
+                if (gpm_fd == -1)
+                {
+                    mouse_enabled = FALSE;
+                    use_mouse_p = MOUSE_NONE;
+                }
                 break;
             }
-
-            FD_SET (gpm_fd, &select_set);
-            maxfdp = max (maxfdp, gpm_fd);
         }
 #endif
 
@@ -2116,7 +2047,7 @@ tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
         }
 
         tty_enable_interrupt_key ();
-        flag = select (maxfdp + 1, &select_set, NULL, NULL, time_addr);
+        flag = select (nfd, &select_set, NULL, NULL, time_addr);
         tty_disable_interrupt_key ();
 
         /* select timed out: it could be for any of the following reasons:
@@ -2140,13 +2071,48 @@ tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
         if (FD_ISSET (input_fd, &select_set))
             break;
 #ifdef HAVE_LIBGPM
-        if (mouse_enabled && use_mouse_p == MOUSE_GPM
-            && gpm_fd > 0 && FD_ISSET (gpm_fd, &select_set))
+        if (mouse_enabled && use_mouse_p == MOUSE_GPM)
         {
-            Gpm_GetEvent (&ev);
-            Gpm_FitEvent (&ev);
-            *event = ev;
-            return EV_MOUSE;
+            if (gpm_fd >= 0)
+            {
+                if (FD_ISSET (gpm_fd, &select_set))
+                {
+                    int status;
+
+                    status = Gpm_GetEvent (&ev);
+                    if (status == 1)    /* success */
+                    {
+                        Gpm_FitEvent (&ev);
+                        *event = ev;
+                        return EV_MOUSE;
+                    }
+                    else if (status == 0)       /* connection closed; -1 == error */
+                    {
+                        if (mouse_fd >= 0 && FD_ISSET (mouse_fd, &select_set))
+                            FD_CLR (mouse_fd, &select_set);
+
+                        /* Try to reopen gpm_mouse connection */
+                        disable_mouse ();
+                        enable_mouse ();
+                    }
+                }
+            }
+            else
+            {
+                if (mouse_fd >= 0)      /* error indicative */
+                {
+                    if (FD_ISSET (mouse_fd, &select_set))
+                        FD_CLR (mouse_fd, &select_set);
+                    mouse_fd = gpm_fd;
+                }
+                /* gpm_fd == -2 means under some X terminal */
+                if (gpm_fd == -1)
+                {
+                    mouse_enabled = FALSE;
+                    use_mouse_p = MOUSE_NONE;
+                }
+                break;
+            }
         }
 #endif /* !HAVE_LIBGPM */
     }
@@ -2169,19 +2135,18 @@ tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
                           || c == MCKEY_EXTENDED_MOUSE))
     {
         /* Mouse event */
-        /* In case of extended coordinates, mouse_btn, mouse_x and mouse_y are already filled in. */
-        if (c != MCKEY_EXTENDED_MOUSE)
-        {
-            /* Variable btn has following meaning: */
-            /* 0 = btn1 dn, 1 = btn2 dn, 2 = btn3 dn, 3 = btn up */
-            mouse_btn = tty_lowlevel_getch () - 32;
-            /* Coordinates are 33-based */
-            /* Transform them to 1-based */
-            mouse_x = tty_lowlevel_getch () - 32;
-            mouse_y = tty_lowlevel_getch () - 32;
-        }
-        xmouse_get_event (event);
-        return (event->type != 0) ? EV_MOUSE : EV_NONE;
+        xmouse_get_event (event, c == MCKEY_EXTENDED_MOUSE);
+        c = (event->type != 0) ? EV_MOUSE : EV_NONE;
+    }
+    else if (c == MCKEY_BRACKETED_PASTING_START)
+    {
+        bracketed_pasting_in_progress = TRUE;
+        c = EV_NONE;
+    }
+    else if (c == MCKEY_BRACKETED_PASTING_END)
+    {
+        bracketed_pasting_in_progress = FALSE;
+        c = EV_NONE;
     }
 
     return c;
@@ -2283,6 +2248,25 @@ application_keypad_mode (void)
         fputs (ESC_STR "=", stdout);
         fflush (stdout);
     }
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+void
+enable_bracketed_paste (void)
+{
+    printf (ESC_STR "[?2004h");
+    fflush (stdout);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+void
+disable_bracketed_paste (void)
+{
+    printf (ESC_STR "[?2004l");
+    fflush (stdout);
+    bracketed_pasting_in_progress = FALSE;
 }
 
 /* --------------------------------------------------------------------------------------------- */

@@ -10,6 +10,7 @@
 #include "lib/global.h"         /* GError */
 
 #include "filemanager/layout.h" /* panel_view_mode_t */
+#include "filemanager/panel.h"  /* WPanel */
 
 /*** typedefs(not structures) and defined constants **********************************************/
 
@@ -54,8 +55,6 @@ typedef struct
     gboolean torben_fj_mode;    /* If TRUE, use some usability hacks by Torben */
 } panels_options_t;
 
-struct WPanel;
-
 typedef struct macro_action_t
 {
     unsigned long action;
@@ -73,7 +72,6 @@ struct mc_fhl_struct;
 /*** global variables defined in .c file *********************************************************/
 
 /* global paremeters */
-extern char *profile_name;
 extern char *global_profile_name;
 extern int confirm_delete;
 extern int confirm_directory_hotlist_delete;
@@ -98,6 +96,7 @@ extern int auto_fill_mkdir_name;
 extern int output_starts_shell;
 extern int use_file_to_check_type;
 extern int file_op_compute_totals;
+extern int editor_ask_filename_before_edit;
 
 extern panels_options_t panels_options;
 
@@ -113,15 +112,19 @@ extern char *autodetect_codeset;
 extern gboolean is_autodetect_codeset_enabled;
 #endif /* !HAVE_CHARSET */
 
+#ifdef HAVE_ASPELL
+extern char *spell_language;
+#endif
+
+/* Value of "other_dir" key in ini file */
+extern char *saved_other_dir;
+
 /* If set, then print to the given file the last directory we were at */
 extern char *last_wd_string;
 
 extern int quit;
 /* Set to TRUE to suppress printing the last directory */
 extern gboolean print_last_revert;
-
-extern char *shell;
-extern const char *mc_prompt;
 
 /* index to record_macro_buf[], -1 if not recording a macro */
 extern int macro_index;
@@ -133,7 +136,7 @@ extern GArray *macros_list;
 
 /*** declarations of public functions ************************************************************/
 
-char *setup_init (void);
+const char *setup_init (void);
 void load_setup (void);
 gboolean save_setup (gboolean save_options, gboolean save_panel_options);
 void done_setup (void);
@@ -150,8 +153,8 @@ char *load_anon_passwd (void);
 void load_keymap_defs (gboolean load_from_file);
 void free_keymap_defs (void);
 
-void panel_load_setup (struct WPanel *panel, const char *section);
-void panel_save_setup (struct WPanel *panel, const char *section);
+void panel_load_setup (WPanel * panel, const char *section);
+void panel_save_setup (WPanel * panel, const char *section);
 
 void panels_load_options (void);
 void panels_save_options (void);

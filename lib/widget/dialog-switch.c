@@ -3,12 +3,12 @@
 
    Original idea and code: Oleg "Olegarch" Konovalov <olegarch@linuxinside.com>
 
-   Copyright (c) 2009, 2010, 2011
+   Copyright (c) 2009, 2010, 2011, 2013
    The Free Software Foundation
 
    Written by:
    Daniel Borca <dborca@yahoo.com>, 2007
-   Andrew Borodin <aborodin@vmail.ru>, 2010
+   Andrew Borodin <aborodin@vmail.ru>, 2010, 2013
 
    This file is part of the Midnight Commander.
 
@@ -43,7 +43,7 @@
 
 /*** global variables ****************************************************************************/
 
-Dlg_head *midnight_dlg = NULL;
+WDialog *midnight_dlg = NULL;
 
 /*** file scope macro definitions ****************************************************************/
 
@@ -75,7 +75,7 @@ dialog_switch_suspend (void *data, void *user_data)
     (void) user_data;
 
     if (data != mc_current->data)
-        ((Dlg_head *) data)->state = DLG_SUSPENDED;
+        DIALOG (data)->state = DLG_SUSPENDED;
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -85,7 +85,7 @@ dialog_switch_goto (GList * dlg)
 {
     if (mc_current != dlg)
     {
-        Dlg_head *old = (Dlg_head *) mc_current->data;
+        WDialog *old = DIALOG (mc_current->data);
 
         mc_current = dlg;
 
@@ -100,7 +100,7 @@ dialog_switch_goto (GList * dlg)
             /* switch from editor, viewer, etc to another dialog */
             old->state = DLG_SUSPENDED;
 
-            if ((Dlg_head *) dlg->data != midnight_dlg)
+            if (DIALOG (dlg->data) != midnight_dlg)
                 /* switch to another editor, viewer, etc */
                 /* return to panels before run the required dialog */
                 dialog_switch_pending = TRUE;
@@ -119,11 +119,11 @@ dialog_switch_goto (GList * dlg)
 static void
 dlg_resize_cb (void *data, void *user_data)
 {
-    Dlg_head *d = data;
+    WDialog *d = data;
 
     (void) user_data;
     if (d->state == DLG_ACTIVE)
-        d->callback (d, NULL, DLG_RESIZE, 0, NULL);
+        send_message (d, NULL, MSG_RESIZE, 0, NULL);
     else
         d->winch_pending = TRUE;
 }
@@ -133,7 +133,7 @@ dlg_resize_cb (void *data, void *user_data)
 /* --------------------------------------------------------------------------------------------- */
 
 void
-dialog_switch_add (Dlg_head * h)
+dialog_switch_add (WDialog * h)
 {
     GList *dlg;
 
@@ -154,11 +154,11 @@ dialog_switch_add (Dlg_head * h)
 /* --------------------------------------------------------------------------------------------- */
 
 void
-dialog_switch_remove (Dlg_head * h)
+dialog_switch_remove (WDialog * h)
 {
     GList *this;
 
-    if ((Dlg_head *) mc_current->data == h)
+    if (DIALOG (mc_current->data) == h)
         this = mc_current;
     else
         this = g_list_find (mc_dialogs, h);
@@ -167,13 +167,13 @@ dialog_switch_remove (Dlg_head * h)
 
     /* adjust current dialog */
     if (top_dlg != NULL)
-        mc_current = g_list_find (mc_dialogs, (Dlg_head *) top_dlg->data);
+        mc_current = g_list_find (mc_dialogs, DIALOG (top_dlg->data));
     else
         mc_current = mc_dialogs;
 
     /* resume forced the current screen */
     if (mc_current != NULL)
-        ((Dlg_head *) mc_current->data)->state = DLG_ACTIVE;
+        DIALOG (mc_current->data)->state = DLG_ACTIVE;
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -240,10 +240,10 @@ dialog_switch_list (void)
 
     for (h = mc_dialogs; h != NULL; h = g_list_next (h))
     {
-        Dlg_head *dlg;
+        WDialog *dlg;
         char *title;
 
-        dlg = (Dlg_head *) h->data;
+        dlg = DIALOG (h->data);
 
         if ((dlg != NULL) && (dlg->get_title != NULL))
             title = dlg->get_title (dlg, WIDGET (listbox->list)->cols - 2);
@@ -274,14 +274,14 @@ dialog_switch_process_pending (void)
 
     while (dialog_switch_pending)
     {
-        Dlg_head *h = (Dlg_head *) mc_current->data;
+        WDialog *h = DIALOG (mc_current->data);
 
         dialog_switch_pending = FALSE;
         h->state = DLG_SUSPENDED;
-        ret = run_dlg (h);
+        ret = dlg_run (h);
         if (h->state == DLG_CLOSED)
         {
-            destroy_dlg (h);
+            dlg_destroy (h);
 
             /* return to panels */
             if (mc_global.mc_run_mode == MC_RUN_FULL)
@@ -306,7 +306,7 @@ dialog_switch_got_winch (void)
 
     for (dlg = mc_dialogs; dlg != NULL; dlg = g_list_next (dlg))
         if (dlg != mc_current)
-            ((Dlg_head *) dlg->data)->winch_pending = TRUE;
+            DIALOG (dlg->data)->winch_pending = TRUE;
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -316,10 +316,10 @@ dialog_switch_shutdown (void)
 {
     while (mc_dialogs != NULL)
     {
-        Dlg_head *dlg = (Dlg_head *) mc_dialogs->data;
+        WDialog *dlg = DIALOG (mc_dialogs->data);
 
-        run_dlg (dlg);
-        destroy_dlg (dlg);
+        dlg_run (dlg);
+        dlg_destroy (dlg);
     }
 }
 

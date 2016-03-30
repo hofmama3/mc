@@ -2,7 +2,7 @@
    Setup loading/saving.
 
    Copyright (C) 1994, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2006, 2007, 2009, 2010, 2011
+   2006, 2007, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    This file is part of the Midnight Commander.
@@ -43,8 +43,6 @@
 #include "lib/util.h"
 #include "lib/widget.h"
 
-#include "lib/vfs/vfs.h"
-
 #ifdef ENABLE_VFS_FTP
 #include "src/vfs/ftpfs/ftpfs.h"
 #endif
@@ -83,7 +81,6 @@
 
 /*** global variables ****************************************************************************/
 
-char *profile_name;             /* ${XDG_CONFIG_HOME}/mc/ini */
 char *global_profile_name;      /* mc.lib */
 
 /* Only used at program boot */
@@ -114,6 +111,9 @@ int drop_menus = 0;
 /* Asks for confirmation when using F3 to view a directory and there
    are tagged files */
 int confirm_view_dir = 0;
+
+/* Ask file name before start the editor */
+int editor_ask_filename_before_edit = 0;
 
 panel_view_mode_t startup_left_mode;
 panel_view_mode_t startup_right_mode;
@@ -187,17 +187,18 @@ char *autodetect_codeset = NULL;
 gboolean is_autodetect_codeset_enabled = FALSE;
 #endif /* !HAVE_CHARSET */
 
+#ifdef HAVE_ASPELL
+char *spell_language = NULL;
+#endif
+
+/* Value of "other_dir" key in ini file */
+char *saved_other_dir = NULL;
+
 /* If set, then print to the given file the last directory we were at */
 char *last_wd_string = NULL;
 
 /* Set when main loop should be terminated */
 int quit = 0;
-
-/* The user's shell */
-char *shell = NULL;
-
-/* The prompt */
-const char *mc_prompt = NULL;
 
 /* Set to TRUE to suppress printing the last directory */
 int print_last_revert = FALSE;
@@ -220,6 +221,7 @@ GArray *macros_list;
 
 /*** file scope variables ************************************************************************/
 
+static char *profile_name = NULL;       /* ${XDG_CONFIG_HOME}/mc/ini */
 static char *panels_profile_name = NULL;        /* ${XDG_CACHE_HOME}/mc/panels.ini */
 
 /* *INDENT-OFF* */
@@ -345,7 +347,9 @@ static const struct
     { "editor_edit_confirm_save", &edit_confirm_save },
     { "editor_syntax_highlighting", &option_syntax_highlighting },
     { "editor_persistent_selections", &option_persistent_selections },
+    { "editor_drop_selection_on_copy", &option_drop_selection_on_copy },
     { "editor_cursor_beyond_eol", &option_cursor_beyond_eol },
+    { "editor_cursor_after_inserted_block", &option_cursor_after_inserted_block },
     { "editor_visible_tabs", &visible_tabs },
     { "editor_visible_spaces", &visible_tws },
     { "editor_line_state", &option_line_state },
@@ -354,6 +358,7 @@ static const struct
     { "editor_show_right_margin", &show_right_margin },
     { "editor_group_undo", &option_group_undo },
 #endif /* USE_INTERNAL_EDIT */
+    { "editor_ask_filename_before_edit", &editor_ask_filename_before_edit },
     { "nice_rotating_dash", &nice_rotating_dash },
     { "mcview_remember_file_position", &mcview_remember_file_position },
     { "auto_fill_mkdir_name", &auto_fill_mkdir_name },
@@ -370,6 +375,7 @@ static const struct
 } str_options[] = {
 #ifdef USE_INTERNAL_EDIT
     { "editor_backup_extension", &option_backup_ext, "~" },
+    { "editor_filesize_threshold", &option_filesize_threshold, "64M" },
 #endif
     { "mcview_eof", &mcview_show_eof, "" },
     {  NULL, NULL, NULL }
@@ -503,7 +509,6 @@ setup__move_panels_config_into_separate_file (const char *profile)
 {
     mc_config_t *tmp_cfg;
     char **groups, **curr_grp;
-    const char *need_grp;
 
     if (!exist_file (profile))
         return;
@@ -540,6 +545,8 @@ setup__move_panels_config_into_separate_file (const char *profile)
 
     while (*curr_grp)
     {
+        const char *need_grp;
+
         need_grp = setup__is_cfg_group_must_panel_config (*curr_grp);
         if (need_grp != NULL)
         {
@@ -868,41 +875,42 @@ save_panel_types (void)
 /*** public functions ****************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
 
-char *
+const char *
 setup_init (void)
 {
-    char *profile;
-    char *inifile;
-
-    if (profile_name != NULL)
-        return profile_name;
-
-    profile = mc_config_get_full_path (MC_CONFIG_FILE);
-    if (!exist_file (profile))
+    if (profile_name == NULL)
     {
-        inifile = mc_build_filename (mc_global.sysconfig_dir, "mc.ini", NULL);
-        if (exist_file (inifile))
+        char *profile;
+
+        profile = mc_config_get_full_path (MC_CONFIG_FILE);
+        if (!exist_file (profile))
         {
-            g_free (profile);
-            profile = inifile;
-        }
-        else
-        {
-            g_free (inifile);
-            inifile = mc_build_filename (mc_global.share_data_dir, "mc.ini", NULL);
+            char *inifile;
+
+            inifile = mc_build_filename (mc_global.sysconfig_dir, "mc.ini", NULL);
             if (exist_file (inifile))
             {
                 g_free (profile);
                 profile = inifile;
             }
             else
+            {
                 g_free (inifile);
+                inifile = mc_build_filename (mc_global.share_data_dir, "mc.ini", NULL);
+                if (!exist_file (inifile))
+                    g_free (inifile);
+                else
+                {
+                    g_free (profile);
+                    profile = inifile;
+                }
+            }
         }
+
+        profile_name = profile;
     }
 
-    profile_name = profile;
-
-    return profile;
+    return profile_name;
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -910,12 +918,13 @@ setup_init (void)
 void
 load_setup (void)
 {
-    char *profile;
+    const char *profile;
     size_t i;
-    char *buffer;
     const char *kt;
 
 #ifdef HAVE_CHARSET
+    char *buffer;
+
     load_codepages_list ();
 #endif /* HAVE_CHARSET */
 
@@ -946,6 +955,10 @@ load_setup (void)
         *int_options[i].opt_addr =
             mc_config_get_int (mc_main_config, CONFIG_APP_SECTION, int_options[i].opt_name,
                                *int_options[i].opt_addr);
+#ifndef USE_INTERNAL_EDIT
+    /* reset forced in case of build without internal editor */
+    use_internal_edit = 0;
+#endif /* USE_INTERNAL_EDIT */
 
     if (option_tab_spacing <= 0)
         option_tab_spacing = DEFAULT_TAB_SPACING;
@@ -976,18 +989,6 @@ load_setup (void)
     /* At least one of the panels is a listing panel */
     if (startup_left_mode != view_listing && startup_right_mode != view_listing)
         startup_left_mode = view_listing;
-
-    if (mc_run_param1 == NULL)
-    {
-        vfs_path_t *vpath;
-        buffer = mc_config_get_string (mc_panels_config, "Dirs", "other_dir", ".");
-        vpath = vfs_path_from_str (buffer);
-        if (vfs_file_is_local (vpath))
-            mc_run_param1 = buffer;
-        else
-            g_free (buffer);
-        vfs_path_free (vpath);
-    }
 
     boot_current_is_left = mc_config_get_bool (mc_panels_config, "Dirs", "current_is_left", TRUE);
 
@@ -1048,6 +1049,11 @@ load_setup (void)
         mc_global.utf8_display = str_isutf8 (buffer);
 #endif /* HAVE_CHARSET */
 
+#ifdef HAVE_ASPELL
+    spell_language =
+        mc_config_get_string (mc_main_config, CONFIG_MISC_SECTION, "spell_language", "en");
+#endif /* HAVE_ASPELL */
+
     clipboard_store_path =
         mc_config_get_string (mc_main_config, CONFIG_MISC_SECTION, "clipboard_store", "");
     clipboard_paste_path =
@@ -1094,6 +1100,12 @@ save_setup (gboolean save_options, gboolean save_panel_options)
         mc_config_set_string (mc_main_config, CONFIG_MISC_SECTION, "autodetect_codeset",
                               autodetect_codeset);
 #endif /* HAVE_CHARSET */
+
+#ifdef HAVE_ASPELL
+        mc_config_set_string (mc_main_config, CONFIG_MISC_SECTION, "spell_language",
+                              spell_language);
+#endif /* HAVE_ASPELL */
+
         mc_config_set_string (mc_main_config, CONFIG_MISC_SECTION, "clipboard_store",
                               clipboard_store_path);
         mc_config_set_string (mc_main_config, CONFIG_MISC_SECTION, "clipboard_paste",
@@ -1118,11 +1130,11 @@ done_setup (void)
 
     g_free (clipboard_store_path);
     g_free (clipboard_paste_path);
-    g_free (profile_name);
     g_free (global_profile_name);
     g_free (mc_global.tty.color_terminal_string);
     g_free (mc_global.tty.term_color_string);
     g_free (mc_global.tty.setup_color_string);
+    g_free (profile_name);
     g_free (panels_profile_name);
     mc_config_deinit (mc_main_config);
     mc_config_deinit (mc_panels_config);
@@ -1141,6 +1153,10 @@ done_setup (void)
     g_free (autodetect_codeset);
     free_codepages_list ();
 #endif
+
+#ifdef HAVE_ASPELL
+    g_free (spell_language);
+#endif /* HAVE_ASPELL */
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -1358,9 +1374,9 @@ panel_load_setup (WPanel * panel, const char *section)
 
     /* Load sort order */
     buffer = mc_config_get_string (mc_panels_config, section, "sort_order", "name");
-    panel->sort_info.sort_field = panel_get_field_by_id (buffer);
-    if (panel->sort_info.sort_field == NULL)
-        panel->sort_info.sort_field = panel_get_field_by_id ("name");
+    panel->sort_field = panel_get_field_by_id (buffer);
+    if (panel->sort_field == NULL)
+        panel->sort_field = panel_get_field_by_id ("name");
 
     g_free (buffer);
 
@@ -1394,7 +1410,7 @@ panel_load_setup (WPanel * panel, const char *section)
 /* --------------------------------------------------------------------------------------------- */
 
 void
-panel_save_setup (struct WPanel *panel, const char *section)
+panel_save_setup (WPanel * panel, const char *section)
 {
     char buffer[BUF_TINY];
     size_t i;
@@ -1404,7 +1420,7 @@ panel_save_setup (struct WPanel *panel, const char *section)
                        panel->sort_info.case_sensitive);
     mc_config_set_int (mc_panels_config, section, "exec_first", panel->sort_info.exec_first);
 
-    mc_config_set_string (mc_panels_config, section, "sort_order", panel->sort_info.sort_field->id);
+    mc_config_set_string (mc_panels_config, section, "sort_order", panel->sort_field->id);
 
     for (i = 0; list_types[i].key != NULL; i++)
         if (list_types[i].list_type == panel->list_type)

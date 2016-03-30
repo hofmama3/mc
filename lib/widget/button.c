@@ -2,7 +2,7 @@
    Widgets for the Midnight Commander
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2010, 2011
+   2004, 2005, 2006, 2007, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Authors:
@@ -11,7 +11,7 @@
    Jakub Jelinek, 1995
    Andrej Borsenkow, 1996
    Norbert Warmuth, 1997
-   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010, 2013
 
    This file is part of the Midnight Commander.
 
@@ -57,14 +57,13 @@
 static cb_ret_t
 button_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
-    WButton *b = (WButton *) w;
-    int stop = 0;
+    WButton *b = BUTTON (w);
+    WDialog *h = w->owner;
     int off = 0;
-    Dlg_head *h = w->owner;
 
     switch (msg)
     {
-    case WIDGET_HOTKEY:
+    case MSG_HOTKEY:
         /*
          * Don't let the default button steal Enter from the current
          * button.  This is a workaround for the flawed event model
@@ -73,37 +72,34 @@ button_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *
          */
         if (parm == '\n' && WIDGET (h->current->data) == WIDGET (b))
         {
-            send_message (w, sender, WIDGET_KEY, ' ', data);
+            send_message (w, sender, MSG_KEY, ' ', data);
             return MSG_HANDLED;
         }
 
         if (parm == '\n' && b->flags == DEFPUSH_BUTTON)
         {
-            send_message (w, sender, WIDGET_KEY, ' ', data);
+            send_message (w, sender, MSG_KEY, ' ', data);
             return MSG_HANDLED;
         }
 
         if (b->text.hotkey != NULL && g_ascii_tolower ((gchar) b->text.hotkey[0]) == parm)
         {
-            send_message (w, sender, WIDGET_KEY, ' ', data);
+            send_message (w, sender, MSG_KEY, ' ', data);
             return MSG_HANDLED;
         }
         return MSG_NOT_HANDLED;
 
-    case WIDGET_KEY:
+    case MSG_KEY:
         if (parm != ' ' && parm != '\n')
             return MSG_NOT_HANDLED;
 
-        if (b->callback != NULL)
-            stop = b->callback (b, b->action);
-        if (b->callback == NULL || stop != 0)
-        {
-            h->ret_value = b->action;
+        h->ret_value = b->action;
+        if (b->callback == NULL || b->callback (b, b->action) != 0)
             dlg_stop (h);
-        }
+
         return MSG_HANDLED;
 
-    case WIDGET_CURSOR:
+    case MSG_CURSOR:
         switch (b->flags)
         {
         case DEFPUSH_BUTTON:
@@ -123,12 +119,12 @@ button_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *
         widget_move (w, 0, b->hotpos + off);
         return MSG_HANDLED;
 
-    case WIDGET_UNFOCUS:
-    case WIDGET_FOCUS:
-    case WIDGET_DRAW:
-        if (msg == WIDGET_UNFOCUS)
+    case MSG_UNFOCUS:
+    case MSG_FOCUS:
+    case MSG_DRAW:
+        if (msg == MSG_UNFOCUS)
             b->selected = FALSE;
-        else if (msg == WIDGET_FOCUS)
+        else if (msg == MSG_FOCUS)
             b->selected = TRUE;
 
         widget_selectcolor (w, b->selected, FALSE);
@@ -168,12 +164,12 @@ button_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *
         }
         return MSG_HANDLED;
 
-    case WIDGET_DESTROY:
+    case MSG_DESTROY:
         release_hotkey (b->text);
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -192,8 +188,8 @@ button_event (Gpm_Event * event, void *data)
         dlg_select_widget (w);
         if ((event->type & GPM_UP) != 0)
         {
-            send_message (w, NULL, WIDGET_KEY, ' ', NULL);
-            w->owner->callback (w->owner, w, DLG_POST_KEY, ' ', NULL);
+            send_message (w, NULL, MSG_KEY, ' ', NULL);
+            send_message (w->owner, w, MSG_POST_KEY, ' ', NULL);
         }
     }
 
@@ -216,7 +212,7 @@ button_new (int y, int x, int action, button_flags_t flags, const char *text, bc
     b->action = action;
     b->flags = flags;
     b->text = parse_hotkey (text);
-    init_widget (w, y, x, 1, button_get_len (b), button_callback, button_event);
+    widget_init (w, y, x, 1, button_get_len (b), button_callback, button_event);
     b->selected = FALSE;
     b->callback = callback;
     widget_want_hotkey (w, TRUE);
@@ -240,10 +236,13 @@ button_get_text (const WButton * b)
 void
 button_set_text (WButton * b, const char *text)
 {
+    Widget *w = WIDGET (b);
+
     release_hotkey (b->text);
     b->text = parse_hotkey (text);
-    WIDGET (b)->cols = button_get_len (b);
-    dlg_redraw (WIDGET (b)->owner);
+    b->hotpos = (b->text.hotkey != NULL) ? str_term_width1 (b->text.start) : -1;
+    w->cols = button_get_len (b);
+    widget_redraw (w);
 }
 
 /* --------------------------------------------------------------------------------------------- */

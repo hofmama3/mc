@@ -2,7 +2,7 @@
    Widgets for the Midnight Commander
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2010, 2011
+   2004, 2005, 2006, 2007, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Authors:
@@ -11,7 +11,7 @@
    Jakub Jelinek, 1995
    Andrej Borsenkow, 1996
    Norbert Warmuth, 1997
-   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010, 2013
 
    This file is part of the Midnight Commander.
 
@@ -151,8 +151,7 @@ buttonbar_call (WButtonBar * bb, int i)
     Widget *w = WIDGET (bb);
 
     if ((bb != NULL) && (bb->labels[i].command != CK_IgnoreKey))
-        ret = w->owner->callback (w->owner, w, DLG_ACTION,
-                                  bb->labels[i].command, bb->labels[i].receiver);
+        ret = send_message (w->owner, w, MSG_ACTION, bb->labels[i].command, bb->labels[i].receiver);
     return ret;
 }
 
@@ -161,22 +160,21 @@ buttonbar_call (WButtonBar * bb, int i)
 static cb_ret_t
 buttonbar_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
-    WButtonBar *bb = (WButtonBar *) w;
+    WButtonBar *bb = BUTTONBAR (w);
     int i;
-    const char *text;
 
     switch (msg)
     {
-    case WIDGET_FOCUS:
+    case MSG_FOCUS:
         return MSG_NOT_HANDLED;
 
-    case WIDGET_HOTKEY:
+    case MSG_HOTKEY:
         for (i = 0; i < BUTTONBAR_LABELS_NUM; i++)
             if (parm == KEY_F (i + 1) && buttonbar_call (bb, i))
                 return MSG_HANDLED;
         return MSG_NOT_HANDLED;
 
-    case WIDGET_DRAW:
+    case MSG_DRAW:
         if (bb->visible)
         {
             buttonbar_init_button_positions (bb);
@@ -188,6 +186,7 @@ buttonbar_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, voi
             for (i = 0; i < BUTTONBAR_LABELS_NUM; i++)
             {
                 int width;
+                const char *text;
 
                 width = buttonbar_get_button_width (bb, i);
                 if (width <= 0)
@@ -203,13 +202,13 @@ buttonbar_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, voi
         }
         return MSG_HANDLED;
 
-    case WIDGET_DESTROY:
+    case MSG_DESTROY:
         for (i = 0; i < BUTTONBAR_LABELS_NUM; i++)
             g_free (bb->labels[i].text);
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -225,7 +224,7 @@ buttonbar_event (Gpm_Event * event, void *data)
 
     if ((event->type & GPM_UP) != 0)
     {
-        WButtonBar *bb = (WButtonBar *) data;
+        WButtonBar *bb = BUTTONBAR (data);
         Gpm_Event local;
         int button;
 
@@ -250,7 +249,7 @@ buttonbar_new (gboolean visible)
 
     bb = g_new0 (WButtonBar, 1);
     w = WIDGET (bb);
-    init_widget (w, LINES - 1, 0, 1, COLS, buttonbar_callback, buttonbar_event);
+    widget_init (w, LINES - 1, 0, 1, COLS, buttonbar_callback, buttonbar_event);
 
     w->pos_flags = WPOS_KEEP_HORZ | WPOS_KEEP_BOTTOM;
     bb->visible = visible;
@@ -287,7 +286,7 @@ buttonbar_set_label (WButtonBar * bb, int idx, const char *text,
 
 /* Find ButtonBar widget in the dialog */
 WButtonBar *
-find_buttonbar (const Dlg_head * h)
+find_buttonbar (const WDialog * h)
 {
-    return (WButtonBar *) find_widget_type (h, buttonbar_callback);
+    return BUTTONBAR (find_widget_type (h, buttonbar_callback));
 }

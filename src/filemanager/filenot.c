@@ -3,12 +3,13 @@
    tree about the changes made to the directory
    structure.
 
-   Copyright (C) 2011
+   Copyright (C) 2011, 2013
    The Free Software Foundation, Inc.
 
    Author:
    Janne Kukonlehto
    Miguel de Icaza
+   Slava Zanko <slavazanko@gmail.com>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -71,56 +72,33 @@ get_absolute_name (const vfs_path_t * vpath)
 /* --------------------------------------------------------------------------------------------- */
 
 static int
-my_mkdir_rec (char *s, mode_t mode)
+my_mkdir_rec (const vfs_path_t * s_vpath, mode_t mode)
 {
-    char *p, *q;
+    vfs_path_t *q;
     int result;
-    vfs_path_t *s_vpath;
 
-    s_vpath = vfs_path_from_str (s);
     if (mc_mkdir (s_vpath, mode) == 0)
-    {
-        vfs_path_free (s_vpath);
         return 0;
-    }
-    else if (errno != ENOENT)
-    {
-        vfs_path_free (s_vpath);
-        return -1;
-    }
+    if (errno != ENOENT)
+        return (-1);
 
-    /* FIXME: should check instead if s is at the root of that filesystem */
-    {
-        if (!vfs_file_is_local (s_vpath))
-        {
-            vfs_path_free (s_vpath);
-            return -1;
-        }
-    }
+    /* FIXME: should check instead if s_vpath is at the root of that filesystem */
+    if (!vfs_file_is_local (s_vpath))
+        return (-1);
 
-    if (!strcmp (s, PATH_SEP_STR))
+    if (strcmp (vfs_path_as_str (s_vpath), PATH_SEP_STR) == 0)
     {
         errno = ENOTDIR;
-        vfs_path_free (s_vpath);
-        return -1;
+        return (-1);
     }
 
-    p = mc_build_filename (s, "..", NULL);
-    {
-        vfs_path_t *vpath;
-
-        vpath = vfs_path_from_str (p);
-        q = vfs_path_to_str (vpath);
-        vfs_path_free (vpath);
-    }
-    g_free (p);
-
+    q = vfs_path_append_new (s_vpath, "..", NULL);
     result = my_mkdir_rec (q, mode);
+    vfs_path_free (q);
+
     if (result == 0)
         result = mc_mkdir (s_vpath, mode);
 
-    vfs_path_free (s_vpath);
-    g_free (q);
     return result;
 }
 
@@ -133,24 +111,12 @@ my_mkdir (const vfs_path_t * s_vpath, mode_t mode)
 {
     int result;
 
-    result = mc_mkdir (s_vpath, mode);
-
-    if (result != 0)
-    {
-        char *p;
-
-        p = vfs_path_to_str (s_vpath);
-        result = my_mkdir_rec (p, mode);
-        g_free (p);
-    }
+    result = my_mkdir_rec (s_vpath, mode);
     if (result == 0)
     {
         vfs_path_t *my_s;
 
         my_s = get_absolute_name (s_vpath);
-#ifdef FIXME
-        tree_add_entry (tree, my_s);
-#endif
         vfs_path_free (my_s);
     }
     return result;
@@ -163,9 +129,6 @@ my_rmdir (const char *s)
 {
     int result;
     vfs_path_t *vpath;
-#ifdef FIXME
-    WTree *tree = 0;
-#endif
 
     vpath = vfs_path_from_str_flags (s, VPF_NO_CANON);
     /* FIXME: Should receive a Wtree! */
@@ -175,9 +138,6 @@ my_rmdir (const char *s)
         vfs_path_t *my_s;
 
         my_s = get_absolute_name (vpath);
-#ifdef FIXME
-        tree_remove_entry (tree, my_s);
-#endif
         vfs_path_free (my_s);
     }
     vfs_path_free (vpath);

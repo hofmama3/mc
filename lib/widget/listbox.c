@@ -2,7 +2,7 @@
    Widgets for the Midnight Commander
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2010, 2011
+   2004, 2005, 2006, 2007, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Authors:
@@ -11,7 +11,7 @@
    Jakub Jelinek, 1995
    Andrej Borsenkow, 1996
    Norbert Warmuth, 1997
-   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010, 2013
 
    This file is part of the Midnight Commander.
 
@@ -122,7 +122,7 @@ static void
 listbox_draw (WListbox * l, gboolean focused)
 {
     Widget *w = WIDGET (l);
-    const Dlg_head *h = w->owner;
+    const WDialog *h = w->owner;
     const gboolean disabled = (w->options & W_DISABLED) != 0;
     const int normalc = disabled ? DISABLED_COLOR : h->color[DLG_COLOR_NORMAL];
     /* *INDENT-OFF* */
@@ -161,7 +161,8 @@ listbox_draw (WListbox * l, gboolean focused)
             text = "";
         else
         {
-            WLEntry *e = (WLEntry *) le->data;
+            WLEntry *e = LENTRY (le->data);
+
             text = e->text;
             le = g_list_next (le);
             pos++;
@@ -189,7 +190,7 @@ listbox_check_hotkey (WListbox * l, int key)
 
     for (i = 0, le = l->list; le != NULL; i++, le = g_list_next (le))
     {
-        WLEntry *e = (WLEntry *) le->data;
+        WLEntry *e = LENTRY (le->data);
 
         if (e->hotkey == key)
             return i;
@@ -367,16 +368,16 @@ listbox_destroy (WListbox * l)
 static cb_ret_t
 listbox_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
-    WListbox *l = (WListbox *) w;
-    Dlg_head *h = w->owner;
+    WListbox *l = LISTBOX (w);
+    WDialog *h = w->owner;
     cb_ret_t ret_code;
 
     switch (msg)
     {
-    case WIDGET_INIT:
+    case MSG_INIT:
         return MSG_HANDLED;
 
-    case WIDGET_HOTKEY:
+    case MSG_HOTKEY:
         {
             int pos, action;
 
@@ -385,7 +386,7 @@ listbox_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void 
                 return MSG_NOT_HANDLED;
 
             listbox_select_entry (l, pos);
-            h->callback (h, w, DLG_ACTION, l->pos, NULL);
+            send_message (h, w, MSG_ACTION, l->pos, NULL);
 
             if (l->callback != NULL)
                 action = l->callback (l);
@@ -401,38 +402,38 @@ listbox_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void 
             return MSG_HANDLED;
         }
 
-    case WIDGET_KEY:
+    case MSG_KEY:
         ret_code = listbox_key (l, parm);
         if (ret_code != MSG_NOT_HANDLED)
         {
             listbox_draw (l, TRUE);
-            h->callback (h, w, DLG_ACTION, l->pos, NULL);
+            send_message (h, w, MSG_ACTION, l->pos, NULL);
         }
         return ret_code;
 
-    case WIDGET_COMMAND:
+    case MSG_ACTION:
         return listbox_execute_cmd (l, parm);
 
-    case WIDGET_CURSOR:
+    case MSG_CURSOR:
         widget_move (l, l->cursor_y, 0);
-        h->callback (h, w, DLG_ACTION, l->pos, NULL);
+        send_message (h, w, MSG_ACTION, l->pos, NULL);
         return MSG_HANDLED;
 
-    case WIDGET_FOCUS:
-    case WIDGET_UNFOCUS:
-    case WIDGET_DRAW:
-        listbox_draw (l, msg != WIDGET_UNFOCUS);
+    case MSG_FOCUS:
+    case MSG_UNFOCUS:
+    case MSG_DRAW:
+        listbox_draw (l, msg != MSG_UNFOCUS);
         return MSG_HANDLED;
 
-    case WIDGET_DESTROY:
+    case MSG_DESTROY:
         listbox_destroy (l);
         return MSG_HANDLED;
 
-    case WIDGET_RESIZED:
+    case MSG_RESIZE:
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -441,7 +442,7 @@ listbox_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void 
 static int
 listbox_event (Gpm_Event * event, void *data)
 {
-    WListbox *l = (WListbox *) data;
+    WListbox *l = LISTBOX (data);
     Widget *w = WIDGET (data);
 
     if (!mouse_global_in_widget (event, w))
@@ -526,7 +527,7 @@ listbox_new (int y, int x, int height, int width, gboolean deletable, lcback_fn 
 
     l = g_new (WListbox, 1);
     w = WIDGET (l);
-    init_widget (w, y, x, height, width, listbox_callback, listbox_event);
+    widget_init (w, y, x, height, width, listbox_callback, listbox_event);
 
     l->list = NULL;
     l->top = l->pos = 0;
@@ -553,7 +554,7 @@ listbox_search_text (WListbox * l, const char *text)
 
         for (i = 0, le = l->list; le != NULL; i++, le = g_list_next (le))
         {
-            WLEntry *e = (WLEntry *) le->data;
+            WLEntry *e = LENTRY (le->data);
 
             if (strcmp (e->text, text) == 0)
                 return i;
@@ -632,7 +633,7 @@ listbox_get_current (WListbox * l, char **string, void **extra)
     gboolean ok;
 
     if (l != NULL)
-        e = (WLEntry *) g_list_nth_data (l->list, l->pos);
+        e = LENTRY (g_list_nth_data (l->list, l->pos));
 
     ok = (e != NULL);
 
@@ -654,7 +655,7 @@ listbox_remove_current (WListbox * l)
 
         current = g_list_nth (l->list, l->pos);
         l->list = g_list_remove_link (l->list, current);
-        listbox_entry_free ((WLEntry *) current->data);
+        listbox_entry_free (LENTRY (current->data));
         g_list_free_1 (current);
         l->count--;
 
@@ -687,8 +688,7 @@ listbox_remove_list (WListbox * l)
 {
     if ((l != NULL) && (l->count != 0))
     {
-        g_list_foreach (l->list, (GFunc) listbox_entry_free, NULL);
-        g_list_free (l->list);
+        g_list_free_full (l->list, listbox_entry_free);
         l->list = NULL;
         l->count = l->pos = l->top = 0;
     }

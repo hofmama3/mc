@@ -2,7 +2,7 @@
    Widgets for the Midnight Commander
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2010, 2011
+   2004, 2005, 2006, 2007, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Authors:
@@ -11,7 +11,7 @@
    Jakub Jelinek, 1995
    Andrej Borsenkow, 1996
    Norbert Warmuth, 1997
-   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010, 2013
 
    This file is part of the Midnight Commander.
 
@@ -56,13 +56,12 @@
 static cb_ret_t
 radio_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
-    WRadio *r = (WRadio *) w;
+    WRadio *r = RADIO (w);
     int i;
-    Dlg_head *h = w->owner;
 
     switch (msg)
     {
-    case WIDGET_HOTKEY:
+    case MSG_HOTKEY:
         {
             for (i = 0; i < r->count; i++)
             {
@@ -75,20 +74,20 @@ radio_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *d
                     r->pos = i;
 
                     /* Take action */
-                    send_message (w, sender, WIDGET_KEY, ' ', data);
+                    send_message (w, sender, MSG_KEY, ' ', data);
                     return MSG_HANDLED;
                 }
             }
         }
         return MSG_NOT_HANDLED;
 
-    case WIDGET_KEY:
+    case MSG_KEY:
         switch (parm)
         {
         case ' ':
             r->sel = r->pos;
-            h->callback (h, w, DLG_ACTION, 0, NULL);
-            send_message (w, sender, WIDGET_FOCUS, ' ', data);
+            send_message (w->owner, w, MSG_ACTION, 0, NULL);
+            send_message (w, sender, MSG_FOCUS, ' ', data);
             return MSG_HANDLED;
 
         case KEY_UP:
@@ -110,18 +109,18 @@ radio_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *d
         }
         return MSG_NOT_HANDLED;
 
-    case WIDGET_CURSOR:
-        h->callback (h, w, DLG_ACTION, 0, NULL);
-        send_message (w, sender, WIDGET_FOCUS, ' ', data);
+    case MSG_CURSOR:
+        send_message (w->owner, w, MSG_ACTION, 0, NULL);
+        send_message (w, sender, MSG_FOCUS, ' ', data);
         widget_move (r, r->pos, 1);
         return MSG_HANDLED;
 
-    case WIDGET_UNFOCUS:
-    case WIDGET_FOCUS:
-    case WIDGET_DRAW:
+    case MSG_UNFOCUS:
+    case MSG_FOCUS:
+    case MSG_DRAW:
         for (i = 0; i < r->count; i++)
         {
-            const gboolean focused = (i == r->pos && msg == WIDGET_FOCUS);
+            const gboolean focused = (i == r->pos && msg == MSG_FOCUS);
 
             widget_selectcolor (w, focused, FALSE);
             widget_move (r, i, 0);
@@ -131,14 +130,14 @@ radio_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *d
         }
         return MSG_HANDLED;
 
-    case WIDGET_DESTROY:
+    case MSG_DESTROY:
         for (i = 0; i < r->count; i++)
             release_hotkey (r->texts[i]);
         g_free (r->texts);
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -154,7 +153,7 @@ radio_event (Gpm_Event * event, void *data)
 
     if ((event->type & (GPM_DOWN | GPM_UP)) != 0)
     {
-        WRadio *r = (WRadio *) data;
+        WRadio *r = RADIO (data);
         Gpm_Event local;
 
         local = mouse_get_local (event, w);
@@ -163,8 +162,8 @@ radio_event (Gpm_Event * event, void *data)
         dlg_select_widget (w);
         if ((event->type & GPM_UP) != 0)
         {
-            radio_callback (w, NULL, WIDGET_KEY, ' ', NULL);
-            w->owner->callback (w->owner, w, DLG_POST_KEY, ' ', NULL);
+            radio_callback (w, NULL, MSG_KEY, ' ', NULL);
+            send_message (w->owner, w, MSG_POST_KEY, ' ', NULL);
         }
     }
 
@@ -197,7 +196,7 @@ radio_new (int y, int x, int count, const char **texts)
         wmax = max (width, wmax);
     }
 
-    init_widget (w, y, x, count, 4 + wmax, radio_callback, radio_event);
+    widget_init (w, y, x, count, 4 + wmax, radio_callback, radio_event);
     /* 4 is width of "(*) " */
     r->state = 1;
     r->pos = 0;

@@ -1,11 +1,12 @@
 /*
    Editor spell checker dialogs
 
-   Copyright (C) 2012
+   Copyright (C) 2012, 2013
    The Free Software Foundation, Inc.
 
    Written by:
    Ilia Maslakov <il.smind@gmail.com>, 2012
+   Andrew Borodin <aborodin@vmail.ru>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -70,10 +71,9 @@ spell_dialog_spell_suggest_show (WEdit * edit, const char *word, char **new_word
     unsigned int i;
     int res;
     char *curr = NULL;
-    Dlg_head *sug_dlg;
+    WDialog *sug_dlg;
     WListbox *sug_list;
     int max_btn_len = 0;
-    int add_len;
     int replace_len;
     int skip_len;
     int cancel_len;
@@ -92,7 +92,6 @@ spell_dialog_spell_suggest_show (WEdit * edit, const char *word, char **new_word
         ypos -= sug_dlg_h;
 
     add_btn = button_new (5, 28, B_ADD_WORD, NORMAL_BUTTON, _("&Add word"), 0);
-    add_len = button_get_len (add_btn);
     replace_btn = button_new (7, 28, B_ENTER, NORMAL_BUTTON, _("&Replace"), 0);
     replace_len = button_get_len (replace_btn);
     skip_btn = button_new (9, 28, B_SKIP_WORD, NORMAL_BUTTON, _("&Skip"), 0);
@@ -109,8 +108,14 @@ spell_dialog_spell_suggest_show (WEdit * edit, const char *word, char **new_word
 
     sug_dlg_w += max_btn_len;
     sug_dlg_w = max (sug_dlg_w, word_label_len) + 1;
-    sug_dlg = create_dlg (TRUE, ypos, xpos, sug_dlg_h, sug_dlg_w,
+
+    sug_dlg = dlg_create (TRUE, ypos, xpos, sug_dlg_h, sug_dlg_w,
                           dialog_colors, NULL, NULL, "[ASpell]", _("Check word"), DLG_COMPACT);
+
+    add_widget (sug_dlg, label_new (1, 2, lang_label));
+    add_widget (sug_dlg, label_new (3, 2, word_label));
+
+    add_widget (sug_dlg, groupbox_new (4, 2, sug_dlg_h - 5, 25, _("Suggest")));
 
     sug_list = listbox_new (5, 2, sug_dlg_h - 7, 24, FALSE, NULL);
     for (i = 0; i < suggest->len; i++)
@@ -123,11 +128,7 @@ spell_dialog_spell_suggest_show (WEdit * edit, const char *word, char **new_word
     add_widget (sug_dlg, skip_btn);
     add_widget (sug_dlg, cancel_button);
 
-    add_widget (sug_dlg, label_new (1, 2, lang_label));
-    add_widget (sug_dlg, label_new (3, 2, word_label));
-    add_widget (sug_dlg, groupbox_new (4, 2, sug_dlg_h - 5, 25, _("Suggest")));
-
-    res = run_dlg (sug_dlg);
+    res = dlg_run (sug_dlg);
     if (res == B_ENTER)
     {
         char *tmp = NULL;
@@ -138,7 +139,7 @@ spell_dialog_spell_suggest_show (WEdit * edit, const char *word, char **new_word
         *new_word = tmp;
     }
 
-    destroy_dlg (sug_dlg);
+    dlg_destroy (sug_dlg);
     g_free (lang_label);
     g_free (word_label);
 

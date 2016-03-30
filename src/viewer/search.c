@@ -3,7 +3,7 @@
    Function for search data
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2011
+   2004, 2005, 2006, 2007, 2009, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
@@ -15,7 +15,7 @@
    Pavel Machek, 1998
    Roland Illig <roland.illig@gmx.de>, 2004, 2005
    Slava Zanko <slavazanko@google.com>, 2009
-   Andrew Borodin <aborodin@vmail.ru>, 2009
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2013
    Ilia Maslakov <il.smind@gmail.com>, 2009
 
    This file is part of the Midnight Commander.
@@ -75,9 +75,9 @@ mcview_search_update_steps (mcview_t * view)
 /* --------------------------------------------------------------------------------------------- */
 
 static gboolean
-mcview_find (mcview_t * view, gsize search_start, gsize * len)
+mcview_find (mcview_t * view, off_t search_start, gsize * len)
 {
-    gsize search_end;
+    off_t search_end;
 
     view->search_numNeedSkipChar = 0;
     search_cb_char_curr_index = -1;
@@ -85,17 +85,17 @@ mcview_find (mcview_t * view, gsize search_start, gsize * len)
     if (mcview_search_options.backwards)
     {
         search_end = mcview_get_filesize (view);
-        while ((int) search_start >= 0)
+        while (search_start >= 0)
         {
             view->search_nroff_seq->index = search_start;
             mcview_nroff_seq_info (view->search_nroff_seq);
 
-            if (search_end > search_start + view->search->original_len
+            if (search_end > search_start + (off_t) view->search->original_len
                 && mc_search_is_fixed_search_str (view->search))
                 search_end = search_start + view->search->original_len;
 
             if (mc_search_run (view->search, (void *) view, search_start, search_end, len)
-                && view->search->normal_offset == (off_t) search_start)
+                && view->search->normal_offset == search_start)
             {
                 if (view->text_nroff_mode)
                     view->search->normal_offset++;
@@ -117,7 +117,7 @@ mcview_find (mcview_t * view, gsize search_start, gsize * len)
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-mcview_search_show_result (mcview_t * view, Dlg_head ** d, size_t match_len)
+mcview_search_show_result (mcview_t * view, WDialog ** d, size_t match_len)
 {
     int nroff_len;
 
@@ -135,23 +135,14 @@ mcview_search_show_result (mcview_t * view, Dlg_head ** d, size_t match_len)
                                                             match_len) : 0;
     view->search_end = view->search_start + match_len + nroff_len;
 
-    if (view->hex_mode)
-    {
-        view->hex_cursor = view->search_start;
-        view->hexedit_lownibble = FALSE;
-        view->dpy_start = view->search_start - view->search_start % view->bytes_per_line;
-        view->dpy_end = view->search_end - view->search_end % view->bytes_per_line;
-    }
-
     if (verbose)
     {
         dlg_run_done (*d);
-        destroy_dlg (*d);
+        dlg_destroy (*d);
         *d = create_message (D_NORMAL, _("Search"), _("Seeking to search result"));
         tty_refresh ();
     }
     mcview_moveto_match (view);
-
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -213,12 +204,12 @@ mcview_search_cmd_callback (const void *user_data, gsize char_offset, int *curre
 
 /* --------------------------------------------------------------------------------------------- */
 
-int
+mc_search_cbret_t
 mcview_search_update_cmd_callback (const void *user_data, gsize char_offset)
 {
     mcview_t *view = (mcview_t *) user_data;
 
-    if (char_offset >= (gsize) view->update_activate)
+    if ((off_t) char_offset >= view->update_activate)
     {
         view->update_activate += view->update_steps;
         if (verbose)
@@ -244,7 +235,7 @@ mcview_do_search (mcview_t * view)
     gboolean isFound = FALSE;
     gboolean need_search_again = TRUE;
 
-    Dlg_head *d = NULL;
+    WDialog *d = NULL;
 
     size_t match_len;
 
@@ -349,7 +340,7 @@ mcview_do_search (mcview_t * view)
     if (verbose)
     {
         dlg_run_done (d);
-        destroy_dlg (d);
+        dlg_destroy (d);
     }
 
     if (!isFound && view->search->error_str != NULL)

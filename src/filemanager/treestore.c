@@ -9,13 +9,15 @@
    it will be possible to have tree views over virtual file systems.
 
    Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2009,
-   2011
+   2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
    Janne Kukonlehto, 1994, 1996
    Norbert Warmuth, 1997
    Miguel de Icaza, 1996, 1999
+   Slava Zanko <slavazanko@gmail.com>, 2013
+   Andrew Borodin <aborodin@vmail.ru>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -57,7 +59,7 @@
 #include "lib/hook.h"
 #include "lib/util.h"
 
-#include "src/setup.h"
+#include "src/setup.h"          /* setup_init() */
 
 #include "treestore.h"
 
@@ -98,17 +100,13 @@ static size_t
 str_common (const vfs_path_t * s1_vpath, const vfs_path_t * s2_vpath)
 {
     size_t result = 0;
-    char *s1, *fs1;
-    char *s2, *fs2;
+    const char *s1, *s2;
 
-    s1 = fs1 = vfs_path_to_str (s1_vpath);
-    s2 = fs2 = vfs_path_to_str (s2_vpath);
+    s1 = vfs_path_as_str (s1_vpath);
+    s2 = vfs_path_as_str (s2_vpath);
 
     while (*s1 != '\0' && *s2 != '\0' && *s1++ == *s2++)
         result++;
-
-    g_free (fs1);
-    g_free (fs2);
 
     return result;
 }
@@ -140,19 +138,14 @@ static int
 pathcmp (const vfs_path_t * p1_vpath, const vfs_path_t * p2_vpath)
 {
     int ret_val;
-    char *p1, *fp1;
-    char *p2, *fp2;
+    const char *p1, *p2;
 
-    p1 = fp1 = vfs_path_to_str (p1_vpath);
-    p2 = fp2 = vfs_path_to_str (p2_vpath);
+    p1 = vfs_path_as_str (p1_vpath);
+    p2 = vfs_path_as_str (p2_vpath);
 
     for (; *p1 == *p2; p1++, p2++)
         if (*p1 == '\0')
-        {
-            g_free (fp1);
-            g_free (fp2);
             return 0;
-        }
 
     if (*p1 == '\0')
         ret_val = -1;
@@ -165,8 +158,6 @@ pathcmp (const vfs_path_t * p1_vpath, const vfs_path_t * p2_vpath)
     else
         ret_val = (*p1 - *p2);
 
-    g_free (fp1);
-    g_free (fp2);
     return ret_val;
 }
 
@@ -216,9 +207,7 @@ static int
 tree_store_load_from (char *name)
 {
     FILE *file;
-    char buffer[MC_MAXPATHLEN + 20], oldname[MC_MAXPATHLEN];
-    char *different;
-    int common;
+    char buffer[MC_MAXPATHLEN + 20];
     int do_load;
 
     g_return_val_if_fail (name != NULL, FALSE);
@@ -248,6 +237,8 @@ tree_store_load_from (char *name)
 
     if (do_load)
     {
+        char oldname[MC_MAXPATHLEN];
+
         ts.loaded = TRUE;
 
         /* File open -> read contents */
@@ -273,8 +264,11 @@ tree_store_load_from (char *name)
                 /* Clear-text decompression */
                 char *s = strtok (lc_name, " ");
 
-                if (s)
+                if (s != NULL)
                 {
+                    char *different;
+                    int common;
+
                     common = atoi (s);
                     different = strtok (NULL, "");
                     if (different)
@@ -332,12 +326,7 @@ tree_store_load_from (char *name)
 static char *
 encode (const vfs_path_t * vpath, size_t offset)
 {
-    char *string, *ret_val;
-
-    string = vfs_path_to_str (vpath);
-    ret_val = strutils_escape (string + offset, -1, "\n\\", FALSE);
-    g_free (string);
-    return ret_val;
+    return strutils_escape (vfs_path_as_str (vpath) + offset, -1, "\n\\", FALSE);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -358,10 +347,10 @@ tree_store_save_to (char *name)
     current = ts.tree_first;
     while (current)
     {
-        int i, common;
-
         if (vfs_file_is_local (current->name))
         {
+            int i, common;
+
             /* Clear-text compression */
             if (current->prev && (common = str_common (current->prev->name, current->name)) > 2)
             {
@@ -496,11 +485,11 @@ static void
 tree_store_notify_remove (tree_entry * entry)
 {
     hook_t *p = remove_entry_hooks;
-    tree_store_remove_fn r;
 
     while (p != NULL)
     {
-        r = (tree_store_remove_fn) p->hook_fn;
+        tree_store_remove_fn r = (tree_store_remove_fn) p->hook_fn;
+
         r (entry, p->hook_data);
         p = p->next;
     }
@@ -549,7 +538,7 @@ remove_entry (tree_entry * entry)
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-process_special_dirs (GList ** special_dirs, char *file)
+process_special_dirs (GList ** special_dirs, const char *file)
 {
     gchar **buffers, **start_buff;
     mc_config_t *cfg;
@@ -581,26 +570,26 @@ should_skip_directory (const vfs_path_t * vpath)
     static GList *special_dirs = NULL;
     GList *l;
     static gboolean loaded = FALSE;
-    char *dir;
     gboolean ret = FALSE;
 
     if (!loaded)
     {
-        loaded = TRUE;
-        setup_init ();
+        const char *profile_name;
+
+        profile_name = setup_init ();
         process_special_dirs (&special_dirs, profile_name);
         process_special_dirs (&special_dirs, global_profile_name);
+
+        loaded = TRUE;
     }
 
-    dir = vfs_path_to_str (vpath);
     for (l = special_dirs; l != NULL; l = g_list_next (l))
-        if (strncmp (dir, l->data, strlen (l->data)) == 0)
+        if (strncmp (vfs_path_as_str (vpath), l->data, strlen (l->data)) == 0)
         {
             ret = TRUE;
             break;
         }
 
-    g_free (dir);
     return ret;
 }
 
@@ -703,19 +692,18 @@ tree_store_remove_entry_remove_hook (tree_store_remove_fn callback)
 void
 tree_store_remove_entry (const vfs_path_t * name_vpath)
 {
-    tree_entry *current, *base, *old;
+    tree_entry *current, *base;
     size_t len;
 
     g_return_if_fail (name_vpath != NULL);
 
     /* Miguel Ugly hack */
     {
-        char *name;
         gboolean is_root;
+        const char *name_vpath_str;
 
-        name = vfs_path_to_str (name_vpath);
-        is_root = (name[0] == PATH_SEP && name[1] == '\0');
-        g_free (name);
+        name_vpath_str = vfs_path_as_str (name_vpath);
+        is_root = (name_vpath_str[0] == PATH_SEP && name_vpath_str[1] == '\0');
         if (is_root)
             return;
     }
@@ -727,16 +715,17 @@ tree_store_remove_entry (const vfs_path_t * name_vpath)
 
     len = vfs_path_len (base->name);
     current = base->next;
-    while (current != NULL && vfs_path_ncmp (current->name, base->name, len) == 0)
+    while (current != NULL && vfs_path_equal_len (current->name, base->name, len))
     {
-        char *current_name;
         gboolean ok;
+        tree_entry *old;
+        const char *cname;
 
-        current_name = vfs_path_to_str (current->name);
-        ok = (current_name[len] == '\0' || current_name[len] == PATH_SEP);
-        g_free (current_name);
+        cname = vfs_path_as_str (current->name);
+        ok = (cname[len] == '\0' || cname[len] == PATH_SEP);
         if (!ok)
             break;
+
         old = current;
         current = current->next;
         remove_entry (old);
@@ -752,9 +741,10 @@ void
 tree_store_mark_checked (const char *subname)
 {
     vfs_path_t *name;
-    char *check_name;
     tree_entry *current, *base;
     int flag = 1;
+    const char *cname;
+
     if (!ts.loaded)
         return;
 
@@ -762,15 +752,14 @@ tree_store_mark_checked (const char *subname)
         return;
 
     /* Calculate the full name of the subdirectory */
-    if (subname[0] == '.' && (subname[1] == 0 || (subname[1] == '.' && subname[2] == 0)))
+    if (DIR_IS_DOT (subname) || DIR_IS_DOTDOT (subname))
         return;
 
-    check_name = vfs_path_to_str (ts.check_name);
-    if (check_name[0] == PATH_SEP && check_name[1] == 0)
+    cname = vfs_path_as_str (ts.check_name);
+    if (cname[0] == PATH_SEP && cname[1] == '\0')
         name = vfs_path_build_filename (PATH_SEP_STR, subname, NULL);
     else
         name = vfs_path_append_new (ts.check_name, subname, NULL);
-    g_free (check_name);
 
     /* Search for the subdirectory */
     current = ts.check_start;
@@ -794,15 +783,15 @@ tree_store_mark_checked (const char *subname)
         len = vfs_path_len (base->name);
         base->mark = 0;
         current = base->next;
-        while (current != NULL && vfs_path_ncmp (current->name, base->name, len) == 0)
+        while (current != NULL && vfs_path_equal_len (current->name, base->name, len))
         {
             gboolean ok;
 
-            check_name = vfs_path_to_str (current->name);
-            ok = (check_name[len] == '\0' || check_name[len] == PATH_SEP || len == 1);
-            g_free (check_name);
+            cname = vfs_path_as_str (current->name);
+            ok = (cname[len] == '\0' || cname[len] == PATH_SEP || len == 1);
             if (!ok)
                 break;
+
             current->mark = 0;
             current = current->next;
         }
@@ -851,16 +840,16 @@ tree_store_start_check (const vfs_path_t * vpath)
     len = vfs_path_len (ts.check_name);
 
     current = ts.check_start;
-    while (current != NULL && vfs_path_ncmp (current->name, ts.check_name, len) == 0)
+    while (current != NULL && vfs_path_equal_len (current->name, ts.check_name, len))
     {
-        char *current_name;
         gboolean ok;
+        const char *cname;
 
-        current_name = vfs_path_to_str (current->name);
-        ok = (current_name[len] == '\0' || current_name[len] == PATH_SEP || len == 1);
-        g_free (current_name);
+        cname = vfs_path_as_str (current->name);
+        ok = (cname[len] == '\0' || cname[len] == PATH_SEP || len == 1);
         if (!ok)
             break;
+
         current->mark = 1;
         current = current->next;
     }
@@ -874,7 +863,7 @@ tree_store_start_check (const vfs_path_t * vpath)
 void
 tree_store_end_check (void)
 {
-    tree_entry *current, *old;
+    tree_entry *current;
     size_t len;
     GList *the_queue;
 
@@ -887,17 +876,17 @@ tree_store_end_check (void)
     len = vfs_path_len (ts.check_name);
 
     current = ts.check_start;
-    while (current != NULL && vfs_path_ncmp (current->name, ts.check_name, len) == 0)
+    while (current != NULL && vfs_path_equal_len (current->name, ts.check_name, len))
     {
-        char *current_name;
         gboolean ok;
+        tree_entry *old;
+        const char *cname;
 
-        current_name = vfs_path_to_str (current->name);
-        ok = (current_name[len] == '\0' || current_name[len] == PATH_SEP || len == 1);
-        g_free (current_name);
-
+        cname = vfs_path_as_str (current->name);
+        ok = (cname[len] == '\0' || cname[len] == PATH_SEP || len == 1);
         if (!ok)
             break;
+
         old = current;
         current = current->next;
         if (old->mark)
@@ -911,8 +900,7 @@ tree_store_end_check (void)
     vfs_path_free (ts.check_name);
     ts.check_name = NULL;
 
-    g_list_foreach (the_queue, (GFunc) vfs_path_free, NULL);
-    g_list_free (the_queue);
+    g_list_free_full (the_queue, (GDestroyNotify) vfs_path_free);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -921,7 +909,6 @@ tree_entry *
 tree_store_rescan (const vfs_path_t * vpath)
 {
     DIR *dirp;
-    struct dirent *dp;
     struct stat buf;
     tree_entry *entry;
 
@@ -939,22 +926,18 @@ tree_store_rescan (const vfs_path_t * vpath)
     dirp = mc_opendir (vpath);
     if (dirp)
     {
+        struct dirent *dp;
+
         for (dp = mc_readdir (dirp); dp; dp = mc_readdir (dirp))
         {
             vfs_path_t *tmp_vpath;
 
-            if (dp->d_name[0] == '.')
-            {
-                if (dp->d_name[1] == 0 || (dp->d_name[1] == '.' && dp->d_name[2] == 0))
-                    continue;
-            }
+            if (DIR_IS_DOT (dp->d_name) || DIR_IS_DOTDOT (dp->d_name))
+                continue;
 
             tmp_vpath = vfs_path_append_new (vpath, dp->d_name, NULL);
-            if (mc_lstat (tmp_vpath, &buf) != -1)
-            {
-                if (S_ISDIR (buf.st_mode))
-                    tree_store_mark_checked (dp->d_name);
-            }
+            if (mc_lstat (tmp_vpath, &buf) != -1 && S_ISDIR (buf.st_mode))
+                tree_store_mark_checked (dp->d_name);
             vfs_path_free (tmp_vpath);
         }
         mc_closedir (dirp);

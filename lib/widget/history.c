@@ -2,7 +2,7 @@
    Widgets for the Midnight Commander
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2010, 2011, 2012
+   2004, 2005, 2006, 2007, 2009, 2010, 2011, 2012, 2013
    The Free Software Foundation, Inc.
 
    Authors:
@@ -11,7 +11,7 @@
    Jakub Jelinek, 1995
    Andrej Borsenkow, 1996
    Norbert Warmuth, 1997
-   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010, 2011, 2012
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010, 2011, 2012, 2013
 
    This file is part of the Midnight Commander.
 
@@ -73,7 +73,7 @@ typedef struct
 /*** file scope functions ************************************************************************/
 
 static cb_ret_t
-history_dlg_reposition (Dlg_head * dlg_head)
+history_dlg_reposition (WDialog * dlg_head)
 {
     history_dlg_data *data;
     int x = 0, y, he, wi;
@@ -117,15 +117,15 @@ history_dlg_reposition (Dlg_head * dlg_head)
 /* --------------------------------------------------------------------------------------------- */
 
 static cb_ret_t
-history_dlg_callback (Dlg_head * h, Widget * sender, dlg_msg_t msg, int parm, void *data)
+history_dlg_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
     switch (msg)
     {
-    case DLG_RESIZE:
-        return history_dlg_reposition (h);
+    case MSG_RESIZE:
+        return history_dlg_reposition (DIALOG (w));
 
     default:
-        return default_dlg_callback (h, sender, msg, parm, data);
+        return dlg_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -290,9 +290,9 @@ char *
 history_show (GList ** history, Widget * widget, int current)
 {
     GList *z, *hlist = NULL, *hi;
-    size_t maxlen, i, count = 0;
+    size_t maxlen, count = 0;
     char *r = NULL;
-    Dlg_head *query_dlg;
+    WDialog *query_dlg;
     WListbox *query_list;
     history_dlg_data hist_data;
 
@@ -304,6 +304,7 @@ history_show (GList ** history, Widget * widget, int current)
     for (z = *history; z != NULL; z = g_list_previous (z))
     {
         WLEntry *entry;
+        size_t i;
 
         i = str_term_width1 ((char *) z->data);
         maxlen = max (maxlen, i);
@@ -320,7 +321,7 @@ history_show (GList ** history, Widget * widget, int current)
     hist_data.maxlen = maxlen;
 
     query_dlg =
-        create_dlg (TRUE, 0, 0, 4, 4, dialog_colors, history_dlg_callback, NULL,
+        dlg_create (TRUE, 0, 0, 4, 4, dialog_colors, history_dlg_callback, NULL,
                     "[History-query]", _("History"), DLG_COMPACT);
     query_dlg->data = &hist_data;
 
@@ -336,7 +337,7 @@ history_show (GList ** history, Widget * widget, int current)
        The main idea - create 4x4 dialog and add 2x2 list in
        center of it, and let dialog function resize it to needed
        size. */
-    history_dlg_callback (query_dlg, NULL, DLG_RESIZE, 0, NULL);
+    send_message (query_dlg, NULL, MSG_RESIZE, 0, NULL);
 
     if (WIDGET (query_dlg)->y < widget->y)
     {
@@ -357,7 +358,7 @@ history_show (GList ** history, Widget * widget, int current)
             listbox_select_entry (query_list, current);
     }
 
-    if (run_dlg (query_dlg) != B_CANCEL)
+    if (dlg_run (query_dlg) != B_CANCEL)
     {
         char *q;
 
@@ -369,9 +370,8 @@ history_show (GList ** history, Widget * widget, int current)
     z = NULL;
     for (hi = query_list->list; hi != NULL; hi = g_list_next (hi))
     {
-        WLEntry *entry;
+        WLEntry *entry = LENTRY (hi->data);
 
-        entry = (WLEntry *) hi->data;
         /* history is being reverted here again */
         z = g_list_prepend (z, entry->text);
         entry->text = NULL;
@@ -381,10 +381,9 @@ history_show (GList ** history, Widget * widget, int current)
     if (WIDGET (query_dlg)->y < widget->y)
         z = g_list_reverse (z);
 
-    destroy_dlg (query_dlg);
+    dlg_destroy (query_dlg);
 
-    g_list_foreach (*history, (GFunc) g_free, NULL);
-    g_list_free (*history);
+    g_list_free_full (*history, g_free);
     *history = g_list_last (z);
 
     return r;

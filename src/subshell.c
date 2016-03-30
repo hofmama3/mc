@@ -2,8 +2,11 @@
    Concurrent shell support for the Midnight Commander
 
    Copyright (C) 1994, 1995, 1998, 1999, 2000, 2001, 2002, 2003, 2004,
-   2005, 2006, 2007, 2011
+   2005, 2006, 2007, 2011, 2013
    The Free Software Foundation, Inc.
+
+   Written by:
+   Slava Zanko <slavazanko@gmail.com>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -70,12 +73,12 @@
 
 /* State of the subshell:
  * INACTIVE: the default state; awaiting a command
- * ACTIVE: remain in the shell until the user hits `subshell_switch_key'
+ * ACTIVE: remain in the shell until the user hits 'subshell_switch_key'
  * RUNNING_COMMAND: return to MC when the current command finishes */
 enum subshell_state_enum subshell_state;
 
 /* Holds the latest prompt captured from the subshell */
-char *subshell_prompt = NULL;
+GString *subshell_prompt = NULL;
 
 /* Subshell: if set, then the prompt was not saved on CONSOLE_SAVE */
 /* We need to paint it after CONSOLE_RESTORE, see: load_prompt */
@@ -158,7 +161,7 @@ static char subshell_cwd[MC_MAXPATHLEN + 1];
 static int subshell_ready;
 
 /* The following two flags can be changed by the SIGCHLD handler. This is */
-/* OK, because the `int' type is updated atomically on all known machines */
+/* OK, because the 'int' type is updated atomically on all known machines */
 static volatile int subshell_alive, subshell_stopped;
 
 /* We store the terminal's initial mode here so that we can configure
@@ -171,11 +174,7 @@ static struct termios shell_mode;
 /* are delivered to the shell pty */
 static struct termios raw_mode;
 
-/* This counter indicates how many characters of prompt we have read */
-/* FIXME: try to figure out why this had to become global */
-static int prompt_pos;
-
-
+/* --------------------------------------------------------------------------------------------- */
 /*** file scope functions ************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
 /**
@@ -185,10 +184,12 @@ static int prompt_pos;
 static ssize_t
 write_all (int fd, const void *buf, size_t count)
 {
-    ssize_t ret;
     ssize_t written = 0;
+
     while (count > 0)
     {
+        ssize_t ret;
+
         ret = write (fd, (const unsigned char *) buf + written, count);
         if (ret < 0)
         {
@@ -241,7 +242,7 @@ init_subshell_child (const char *pty_name)
     if (tcsetattr (subshell_pty_slave, TCSANOW, &shell_mode))
     {
         fprintf (stderr, "Cannot set pty terminal modes: %s\r\n", unix_error_string (errno));
-        _exit (FORK_FAILURE);
+        my_exit (FORK_FAILURE);
     }
 
     /* Set the pty's size (80x25 by default on Linux) according to the */
@@ -251,10 +252,11 @@ init_subshell_child (const char *pty_name)
     /* Set up the subshell's environment and init file name */
 
     /* It simplifies things to change to our home directory here, */
-    /* and the user's startup file may do a `cd' command anyway   */
+    /* and the user's startup file may do a 'cd' command anyway   */
     {
         int ret;
         ret = chdir (mc_config_get_home_dir ());        /* FIXME? What about when we re-run the subshell? */
+        (void) ret;
     }
 
     /* Set MC_SID to prevent running one mc from another */
@@ -302,7 +304,7 @@ init_subshell_child (const char *pty_name)
 
     default:
         fprintf (stderr, __FILE__ ": unimplemented subshell type %d\r\n", subshell_type);
-        _exit (FORK_FAILURE);
+        my_exit (FORK_FAILURE);
     }
 
     /* Attach all our standard file descriptors to the pty */
@@ -329,28 +331,28 @@ init_subshell_child (const char *pty_name)
     switch (subshell_type)
     {
     case BASH:
-        execl (shell, "bash", "-rcfile", init_file, (char *) NULL);
+        execl (mc_global.tty.shell, "bash", "-rcfile", init_file, (char *) NULL);
         break;
 
     case TCSH:
-        execl (shell, "tcsh", (char *) NULL);
+        execl (mc_global.tty.shell, "tcsh", (char *) NULL);
         break;
 
     case ZSH:
         /* Use -g to exclude cmds beginning with space from history
          * and -Z to use the line editor on non-interactive term */
-        execl (shell, "zsh", "-Z", "-g", (char *) NULL);
+        execl (mc_global.tty.shell, "zsh", "-Z", "-g", (char *) NULL);
 
         break;
 
     case FISH:
-        execl (shell, "fish", (char *) NULL);
+        execl (mc_global.tty.shell, "fish", (char *) NULL);
         break;
     }
 
     /* If we get this far, everything failed miserably */
     g_free (init_file);
-    _exit (FORK_FAILURE);
+    my_exit (FORK_FAILURE);
 }
 
 
@@ -411,7 +413,7 @@ init_raw_mode ()
     /* pty.  So, instead of changing the code for execute(), pre_exec(),        */
     /* etc, we just set up the modes we need here, before each command.         */
 
-    if (initialized == 0)       /* First time: initialise `raw_mode' */
+    if (initialized == 0)       /* First time: initialise 'raw_mode' */
     {
         tcgetattr (STDOUT_FILENO, &raw_mode);
         raw_mode.c_lflag &= ~ICANON;    /* Disable line-editing chars, etc.   */
@@ -429,7 +431,7 @@ init_raw_mode ()
 /* --------------------------------------------------------------------------------------------- */
 /**
  * Wait until the subshell dies or stops.  If it stops, make it resume.
- * Possibly modifies the globals `subshell_alive' and `subshell_stopped'
+ * Possibly modifies the globals 'subshell_alive' and 'subshell_stopped'
  */
 
 static void
@@ -470,9 +472,8 @@ synchronize (void)
 static gboolean
 feed_subshell (int how, int fail_on_error)
 {
-    fd_set read_set;            /* For `select' */
-    int maxfdp;
-    int bytes;                  /* For the return value from `read' */
+    fd_set read_set;            /* For 'select' */
+    int bytes;                  /* For the return value from 'read' */
     int i;                      /* Loop counter */
 
     struct timeval wtime;       /* Maximum time we wait for the subshell */
@@ -485,10 +486,12 @@ feed_subshell (int how, int fail_on_error)
 
     while (TRUE)
     {
+        int maxfdp;
+
         if (!subshell_alive)
             return FALSE;
 
-        /* Prepare the file-descriptor set and call `select' */
+        /* Prepare the file-descriptor set and call 'select' */
 
         FD_ZERO (&read_set);
         FD_SET (mc_global.tty.subshell_pty, &read_set);
@@ -790,15 +793,15 @@ init_subshell (void)
     {                           /* First time through */
         /* Find out what type of shell we have */
 
-        if (strstr (shell, "/zsh") || getenv ("ZSH_VERSION"))
+        if (strstr (mc_global.tty.shell, "/zsh") || getenv ("ZSH_VERSION"))
             subshell_type = ZSH;
-        else if (strstr (shell, "/tcsh"))
+        else if (strstr (mc_global.tty.shell, "/tcsh"))
             subshell_type = TCSH;
-        else if (strstr (shell, "/csh"))
+        else if (strstr (mc_global.tty.shell, "/csh"))
             subshell_type = TCSH;
-        else if (strstr (shell, "/bash") || getenv ("BASH"))
+        else if (strstr (mc_global.tty.shell, "/bash") || getenv ("BASH"))
             subshell_type = BASH;
-        else if (strstr (shell, "/fish"))
+        else if (strstr (mc_global.tty.shell, "/fish"))
             subshell_type = FISH;
         else
         {
@@ -878,7 +881,7 @@ init_subshell (void)
         init_subshell_child (pty_name);
     }
 
-    /* Set up `precmd' or equivalent for reading the subshell's CWD */
+    /* Set up 'precmd' or equivalent for reading the subshell's CWD */
 
     switch (subshell_type)
     {
@@ -924,14 +927,12 @@ init_subshell (void)
 int
 invoke_subshell (const char *command, int how, vfs_path_t ** new_dir_vpath)
 {
-    char *pcwd;
-
     /* Make the MC terminal transparent */
     tcsetattr (STDOUT_FILENO, TCSANOW, &raw_mode);
 
     /* Make the subshell change to MC's working directory */
     if (new_dir_vpath != NULL)
-        do_subshell_chdir (current_panel->cwd_vpath, TRUE, TRUE);
+        do_subshell_chdir (current_panel->cwd_vpath, TRUE);
 
     if (command == NULL)        /* The user has done "C-o" from MC */
     {
@@ -957,23 +958,18 @@ invoke_subshell (const char *command, int how, vfs_path_t ** new_dir_vpath)
 
     feed_subshell (how, FALSE);
 
+    if (new_dir_vpath != NULL && subshell_alive)
     {
-        char *cwd_str;
+        const char *pcwd;
 
-        cwd_str = vfs_path_to_str (current_panel->cwd_vpath);
-        pcwd = vfs_translate_path_n (cwd_str);
-        g_free (cwd_str);
+        pcwd = vfs_translate_path (vfs_path_as_str (current_panel->cwd_vpath));
+        if (strcmp (subshell_cwd, pcwd) != 0)
+            *new_dir_vpath = vfs_path_from_str (subshell_cwd);  /* Make MC change to the subshell's CWD */
     }
-
-    if (new_dir_vpath != NULL && subshell_alive && strcmp (subshell_cwd, pcwd))
-        *new_dir_vpath = vfs_path_from_str (subshell_cwd);      /* Make MC change to the subshell's CWD */
-    g_free (pcwd);
 
     /* Restart the subshell if it has died by SIGHUP, SIGQUIT, etc. */
     while (!subshell_alive && quit == 0 && mc_global.tty.use_subshell)
         init_subshell ();
-
-    prompt_pos = 0;
 
     return quit;
 }
@@ -981,28 +977,31 @@ invoke_subshell (const char *command, int how, vfs_path_t ** new_dir_vpath)
 
 /* --------------------------------------------------------------------------------------------- */
 
-int
+gboolean
 read_subshell_prompt (void)
 {
-    static int prompt_size = INITIAL_PROMPT_SIZE;
-    int bytes = 0, i, rc = 0;
+    int rc = 0;
+    ssize_t bytes = 0;
     struct timeval timeleft = { 0, 0 };
+    GString *p;
+    gboolean prompt_was_reset = FALSE;
 
     fd_set tmp;
     FD_ZERO (&tmp);
     FD_SET (mc_global.tty.subshell_pty, &tmp);
 
+    /* First time through */
     if (subshell_prompt == NULL)
-    {                           /* First time through */
-        subshell_prompt = g_malloc (prompt_size);
-        *subshell_prompt = '\0';
-        prompt_pos = 0;
-    }
+        subshell_prompt = g_string_sized_new (INITIAL_PROMPT_SIZE);
+
+    p = g_string_sized_new (INITIAL_PROMPT_SIZE);
 
     while (subshell_alive
-           && (rc = select (mc_global.tty.subshell_pty + 1, &tmp, NULL, NULL, &timeleft)))
+           && (rc = select (mc_global.tty.subshell_pty + 1, &tmp, NULL, NULL, &timeleft)) != 0)
     {
-        /* Check for `select' errors */
+        ssize_t i;
+
+        /* Check for 'select' errors */
         if (rc == -1)
         {
             if (errno == EINTR)
@@ -1020,27 +1019,22 @@ read_subshell_prompt (void)
         bytes = read (mc_global.tty.subshell_pty, pty_buffer, sizeof (pty_buffer));
 
         /* Extract the prompt from the shell output */
-
-        for (i = 0; i < bytes; ++i)
+        for (i = 0; i < bytes; i++)
             if (pty_buffer[i] == '\n' || pty_buffer[i] == '\r')
             {
-                prompt_pos = 0;
+                g_string_set_size (p, 0);
+                prompt_was_reset = TRUE;
             }
-            else
-            {
-                if (!pty_buffer[i])
-                    continue;
-
-                subshell_prompt[prompt_pos++] = pty_buffer[i];
-                if (prompt_pos == prompt_size)
-                    subshell_prompt = g_realloc (subshell_prompt, prompt_size *= 2);
-            }
-
-        subshell_prompt[prompt_pos] = '\0';
+            else if (pty_buffer[i] != '\0')
+                g_string_append_c (p, pty_buffer[i]);
     }
-    if (rc == 0 && bytes == 0)
-        return FALSE;
-    return TRUE;
+
+    if (p->len != 0 || prompt_was_reset)
+        g_string_assign (subshell_prompt, p->str);
+
+    g_string_free (p, TRUE);
+
+    return (rc != 0 || bytes != 0);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -1050,7 +1044,7 @@ do_update_prompt (void)
 {
     if (update_subshell_prompt)
     {
-        printf ("\r\n%s", subshell_prompt);
+        printf ("\r\n%s", subshell_prompt->str);
         fflush (stdout);
         update_subshell_prompt = FALSE;
     }
@@ -1078,7 +1072,7 @@ exit_subshell (void)
                          tcsh_fifo, unix_error_string (errno));
         }
 
-        g_free (subshell_prompt);
+        g_string_free (subshell_prompt, TRUE);
         subshell_prompt = NULL;
         pty_buffer[0] = '\0';
     }
@@ -1104,13 +1098,12 @@ exit_subshell (void)
  *
  */
 
-static char *
+static GString *
 subshell_name_quote (const char *s)
 {
-    char *ret, *d;
+    GString *ret;
     const char *su, *n;
     const char *quote_cmd_start, *quote_cmd_end;
-    int c;
 
     if (subshell_type == FISH)
     {
@@ -1123,49 +1116,36 @@ subshell_name_quote (const char *s)
         quote_cmd_end = "'`\"";
     }
 
-    /* Factor 5 because we need \, 0 and 3 other digits per character. */
-    d = ret = g_try_malloc (1 + (5 * strlen (s)) + (strlen (quote_cmd_start))
-                            + (strlen (quote_cmd_end)));
-    if (d == NULL)
-        return NULL;
+    ret = g_string_sized_new (64);
 
-    /* Prevent interpreting leading `-' as a switch for `cd' */
-    if (*s == '-')
-    {
-        *d++ = '.';
-        *d++ = '/';
-    }
+    /* Prevent interpreting leading '-' as a switch for 'cd' */
+    if (s[0] == '-')
+        g_string_append (ret, "./");
 
     /* Copy the beginning of the command to the buffer */
-    strcpy (d, quote_cmd_start);
-    d += strlen (quote_cmd_start);
+    g_string_append (ret, quote_cmd_start);
 
     /*
      * Print every character except digits and letters as a backslash-escape
      * sequence of the form \0nnn, where "nnn" is the numeric value of the
      * character converted to octal number.
      */
-    su = s;
-    for (; su[0] != '\0';)
+    for (su = s; su[0] != '\0'; su = n)
     {
         n = str_cget_next_char_safe (su);
+
         if (str_isalnum (su))
-        {
-            memcpy (d, su, n - su);
-            d += n - su;
-        }
+            g_string_append_len (ret, su, n - su);
         else
         {
+            int c;
+
             for (c = 0; c < n - su; c++)
-            {
-                sprintf (d, "\\0%03o", (unsigned char) su[c]);
-                d += 5;
-            }
+                g_string_append_printf (ret, "\\0%03o", (unsigned char) su[c]);
         }
-        su = n;
     }
 
-    strcpy (d, quote_cmd_end);
+    g_string_append (ret, quote_cmd_end);
 
     return ret;
 }
@@ -1175,11 +1155,9 @@ subshell_name_quote (const char *s)
 
 /** If it actually changed the directory it returns true */
 void
-do_subshell_chdir (const vfs_path_t * vpath, gboolean update_prompt, gboolean reset_prompt)
+do_subshell_chdir (const vfs_path_t * vpath, gboolean update_prompt)
 {
     char *pcwd;
-    char *temp;
-    char *directory;
 
     pcwd = vfs_path_to_str_flags (current_panel->cwd_vpath, 0, VPF_RECODE);
 
@@ -1199,27 +1177,18 @@ do_subshell_chdir (const vfs_path_t * vpath, gboolean update_prompt, gboolean re
        because we set "HISTCONTROL=ignorespace") */
     write_all (mc_global.tty.subshell_pty, " cd ", 4);
 
-    directory = vfs_path_to_str (vpath);
-    if (directory != '\0')
+    if (vpath != NULL)
     {
-        char *translate;
+        const char *translate;
 
-        translate = vfs_translate_path_n (directory);
+        translate = vfs_translate_path (vfs_path_as_str (vpath));
         if (translate != NULL)
         {
+            GString *temp;
+
             temp = subshell_name_quote (translate);
-            if (temp)
-            {
-                write_all (mc_global.tty.subshell_pty, temp, strlen (temp));
-                g_free (temp);
-            }
-            else
-            {
-                /* Should not happen unless the directory name is so long
-                   that we don't have memory to quote it.  */
-                write_all (mc_global.tty.subshell_pty, ".", 1);
-            }
-            g_free (translate);
+            write_all (mc_global.tty.subshell_pty, temp->str, temp->len);
+            g_string_free (temp, TRUE);
         }
         else
         {
@@ -1230,7 +1199,6 @@ do_subshell_chdir (const vfs_path_t * vpath, gboolean update_prompt, gboolean re
     {
         write_all (mc_global.tty.subshell_pty, "/", 1);
     }
-    g_free (directory);
     write_all (mc_global.tty.subshell_pty, "\n", 1);
 
     subshell_state = RUNNING_COMMAND;
@@ -1255,7 +1223,7 @@ do_subshell_chdir (const vfs_path_t * vpath, gboolean update_prompt, gboolean re
             bPathNotEq = strcmp (p_subshell_cwd, p_current_panel_cwd);
         }
 
-        if (bPathNotEq && strcmp (pcwd, ".") != 0)
+        if (bPathNotEq && !DIR_IS_DOT (pcwd))
         {
             char *cwd;
 
@@ -1265,8 +1233,17 @@ do_subshell_chdir (const vfs_path_t * vpath, gboolean update_prompt, gboolean re
         }
     }
 
-    if (reset_prompt)
-        prompt_pos = 0;
+    /* Really escape Zsh history */
+    if (subshell_type == ZSH)
+    {
+        /* Per Zsh documentation last command prefixed with space lingers in the internal history
+         * until the next command is entered before it vanishes. To make it vanish right away,
+         * type a space and press return. */
+        write_all (mc_global.tty.subshell_pty, " \n", 2);
+        subshell_state = RUNNING_COMMAND;
+        feed_subshell (QUIETLY, FALSE);
+    }
+
     update_subshell_prompt = FALSE;
 
     g_free (pcwd);
@@ -1291,7 +1268,7 @@ subshell_get_console_attributes (void)
 /* --------------------------------------------------------------------------------------------- */
 /**
  * Figure out whether the subshell has stopped, exited or been killed
- * Possibly modifies: `subshell_alive', `subshell_stopped' and `quit' */
+ * Possibly modifies: 'subshell_alive', 'subshell_stopped' and 'quit' */
 
 void
 sigchld_handler (int sig)

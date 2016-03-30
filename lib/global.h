@@ -117,6 +117,10 @@
 #define BUF_SMALL 128
 #define BUF_TINY 64
 
+/* ESC_CHAR is defined in /usr/include/langinfo.h in some systems */
+#ifdef ESC_CHAR
+#undef ESC_CHAR
+#endif
 /* AIX compiler doesn't understand '\e' */
 #define ESC_CHAR '\033'
 #define ESC_STR  "\033"
@@ -132,7 +136,7 @@
 #define UTF8_CHAR_LEN 6
 
 /* Used to distinguish between a normal MC termination and */
-/* one caused by typing `exit' or `logout' in the subshell */
+/* one caused by typing 'exit' or 'logout' in the subshell */
 #define SUBSHELL_EXIT 128
 
 /* C++ style type casts */
@@ -150,6 +154,8 @@
 #endif
 
 #define MC_ERROR g_quark_from_static_string (PACKAGE)
+
+#define DEFAULT_CHARSET "ASCII"
 
 /*** enums ***************************************************************************************/
 
@@ -239,6 +245,9 @@ typedef struct
         /* File descriptors of the pseudoterminal used by the subshell */
         int subshell_pty;
 #endif                          /* !ENABLE_SUBSHELL */
+
+        /* The user's shell */
+        char *shell;
 
         /* This flag is set by xterm detection routine in function main() */
         /* It is used by function view_other_cmd() */

@@ -35,10 +35,12 @@ SYNTAXFILES =			\
 	idl.syntax		\
 	ini.syntax		\
 	j.syntax		\
+	jal.syntax		\
 	java.syntax		\
 	js.syntax		\
 	latex.syntax		\
 	lisp.syntax		\
+	lkr.syntax		\
 	lsm.syntax		\
 	lua.syntax		\
 	m4.syntax		\
@@ -77,7 +79,7 @@ SYNTAXFILES =			\
 	yum-repo.syntax		\
 	yxx.syntax
 
-if USE_EDIT
+if USE_INTERNAL_EDIT
 syntaxdir =		$(pkgdatadir)/syntax
 syntax_DATA =		$(SYNTAX_OUT) \
 			$(SYNTAXFILES)

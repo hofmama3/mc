@@ -2,11 +2,12 @@
    Search text engine.
    Interface functions
 
-   Copyright (C) 2009, 2011
+   Copyright (C) 2009, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
-   Slava Zanko <slavazanko@gmail.com>, 2009.
+   Slava Zanko <slavazanko@gmail.com>, 2009
+   Andrew Borodin <aborodin@vmail.ru>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -61,8 +62,8 @@ mc_search__cond_struct_new (mc_search_t * lc_mc_search, const char *str,
                             gsize str_len, const char *charset)
 {
     mc_search_cond_t *mc_search_cond;
-    mc_search_cond = g_malloc0 (sizeof (mc_search_cond_t));
 
+    mc_search_cond = g_malloc0 (sizeof (mc_search_cond_t));
     mc_search_cond->str = g_string_new_len (str, str_len);
     mc_search_cond->charset = g_strdup (charset);
 
@@ -115,38 +116,48 @@ mc_search__cond_struct_free (mc_search_cond_t * mc_search_cond)
 static void
 mc_search__conditions_free (GPtrArray * array)
 {
-    gsize loop1;
-    mc_search_cond_t *lc_mc_search;
-
-    for (loop1 = 0; loop1 < array->len; loop1++)
-    {
-        lc_mc_search = (mc_search_cond_t *) g_ptr_array_index (array, loop1);
-        mc_search__cond_struct_free (lc_mc_search);
-    }
+    g_ptr_array_foreach (array, (GFunc) mc_search__cond_struct_free, NULL);
     g_ptr_array_free (array, TRUE);
 }
 
 /* --------------------------------------------------------------------------------------------- */
-
 /*** public functions ****************************************************************************/
+/* --------------------------------------------------------------------------------------------- */
+/* Init search descriptor.
+ *
+ * @param original pattern to search
+ * @param original_len length of #original or -1 if #original is NULL-terminated
+ * @param original_charset charset of #original. If NULL then cp_display will be used
+ *
+ * @return new mc_search_t object. Use #mc_search_free() to free it.
+ */
 
 mc_search_t *
-mc_search_new (const gchar * original, gsize str_len)
+mc_search_new (const gchar * original, gsize original_len, const gchar * original_charset)
 {
     mc_search_t *lc_mc_search;
-    if (!original)
+
+    if (original == NULL)
         return NULL;
 
-    if ((gssize) str_len == -1)
+    if ((gssize) original_len == -1)
     {
-        str_len = strlen (original);
-        if (str_len == 0)
+        original_len = strlen (original);
+        if (original_len == 0)
             return NULL;
     }
 
-    lc_mc_search = g_malloc0 (sizeof (mc_search_t));
-    lc_mc_search->original = g_strndup (original, str_len);
-    lc_mc_search->original_len = str_len;
+    lc_mc_search = g_new0 (mc_search_t, 1);
+    lc_mc_search->original = g_strndup (original, original_len);
+    lc_mc_search->original_len = original_len;
+#ifdef HAVE_CHARSET
+    lc_mc_search->original_charset =
+        g_strdup (original_charset != NULL
+                  && *original_charset != '\0' ? original_charset : cp_display);
+#else
+    (void) original_charset;
+#endif
+
     return lc_mc_search;
 }
 
@@ -159,13 +170,16 @@ mc_search_free (mc_search_t * lc_mc_search)
         return;
 
     g_free (lc_mc_search->original);
+#ifdef HAVE_CHARSET
+    g_free (lc_mc_search->original_charset);
+#endif
     g_free (lc_mc_search->error_str);
 
-    if (lc_mc_search->conditions)
+    if (lc_mc_search->conditions != NULL)
         mc_search__conditions_free (lc_mc_search->conditions);
 
 #ifdef SEARCH_TYPE_GLIB
-    if (lc_mc_search->regex_match_info)
+    if (lc_mc_search->regex_match_info != NULL)
         g_match_info_free (lc_mc_search->regex_match_info);
 #else /* SEARCH_TYPE_GLIB */
     g_free (lc_mc_search->regex_match_info);
@@ -183,27 +197,32 @@ gboolean
 mc_search_prepare (mc_search_t * lc_mc_search)
 {
     GPtrArray *ret;
+
     ret = g_ptr_array_new ();
 #ifdef HAVE_CHARSET
     if (lc_mc_search->is_all_charsets)
     {
-        gsize loop1, recoded_str_len;
-        gchar *buffer;
+        gsize loop1;
+
         for (loop1 = 0; loop1 < codepages->len; loop1++)
         {
-            const char *id = ((codepage_desc *) g_ptr_array_index (codepages, loop1))->id;
-            if (!g_ascii_strcasecmp (id, cp_source))
+            const char *id;
+            gsize recoded_str_len;
+            gchar *buffer;
+
+            id = ((codepage_desc *) g_ptr_array_index (codepages, loop1))->id;
+            if (g_ascii_strcasecmp (id, lc_mc_search->original_charset) == 0)
             {
                 g_ptr_array_add (ret,
                                  mc_search__cond_struct_new (lc_mc_search, lc_mc_search->original,
                                                              lc_mc_search->original_len,
-                                                             cp_source));
+                                                             lc_mc_search->original_charset));
                 continue;
             }
 
             buffer =
                 mc_search__recode_str (lc_mc_search->original, lc_mc_search->original_len,
-                                       cp_source, id, &recoded_str_len);
+                                       lc_mc_search->original_charset, id, &recoded_str_len);
 
             g_ptr_array_add (ret,
                              mc_search__cond_struct_new (lc_mc_search, buffer,
@@ -214,16 +233,15 @@ mc_search_prepare (mc_search_t * lc_mc_search)
     else
     {
         g_ptr_array_add (ret,
-                         (gpointer) mc_search__cond_struct_new (lc_mc_search,
-                                                                lc_mc_search->original,
-                                                                lc_mc_search->original_len,
-                                                                cp_source));
+                         mc_search__cond_struct_new (lc_mc_search, lc_mc_search->original,
+                                                     lc_mc_search->original_len,
+                                                     lc_mc_search->original_charset));
     }
 #else
     g_ptr_array_add (ret,
-                     (gpointer) mc_search__cond_struct_new (lc_mc_search, lc_mc_search->original,
-                                                            lc_mc_search->original_len,
-                                                            str_detect_termencoding ()));
+                     mc_search__cond_struct_new (lc_mc_search, lc_mc_search->original,
+                                                 lc_mc_search->original_len,
+                                                 str_detect_termencoding ()));
 #endif
     lc_mc_search->conditions = ret;
 
@@ -238,7 +256,7 @@ mc_search_run (mc_search_t * lc_mc_search, const void *user_data,
 {
     gboolean ret = FALSE;
 
-    if (!lc_mc_search)
+    if (lc_mc_search == NULL || user_data == NULL)
         return FALSE;
     if (!mc_search_is_type_avail (lc_mc_search->search_type))
     {
@@ -247,7 +265,7 @@ mc_search_run (mc_search_t * lc_mc_search, const void *user_data,
         return FALSE;
     }
 #ifdef SEARCH_TYPE_GLIB
-    if (lc_mc_search->regex_match_info)
+    if (lc_mc_search->regex_match_info != NULL)
     {
         g_match_info_free (lc_mc_search->regex_match_info);
         lc_mc_search->regex_match_info = NULL;
@@ -306,7 +324,7 @@ mc_search_types_list_get (size_t * num)
 {
     /* don't count last NULL item */
     if (num != NULL)
-        *num = sizeof (mc_search__list_types) / sizeof (mc_search__list_types[0]) - 1;
+        *num = G_N_ELEMENTS (mc_search__list_types) - 1;
 
     return mc_search__list_types;
 }
@@ -377,14 +395,30 @@ mc_search_is_fixed_search_str (mc_search_t * lc_mc_search)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/* Search specified pattern in specified string.
+ *
+ * @param pattern string to search
+ * @param pattern_charset charset of #pattern. If NULL then cp_display will be used
+ * @param str string where search #pattern
+ * @param search type (normal, regex, hex or glob)
+ *
+ * @return TRUE if found is successful, FALSE otherwise.
+ */
 
 gboolean
-mc_search (const gchar * pattern, const gchar * str, mc_search_type_t type)
+mc_search (const gchar * pattern, const gchar * pattern_charset, const gchar * str,
+           mc_search_type_t type)
 {
     gboolean ret;
-    mc_search_t *search = mc_search_new (pattern, -1);
+    mc_search_t *search;
+
+    if (str == NULL)
+        return FALSE;
+
+    search = mc_search_new (pattern, -1, pattern_charset);
     if (search == NULL)
         return FALSE;
+
     search->search_type = type;
     search->is_case_sensitive = TRUE;
 
@@ -401,7 +435,7 @@ mc_search (const gchar * pattern, const gchar * str, mc_search_type_t type)
 int
 mc_search_getstart_result_by_num (mc_search_t * lc_mc_search, int lc_index)
 {
-    if (!lc_mc_search)
+    if (lc_mc_search == NULL)
         return 0;
     if (lc_mc_search->search_type == MC_SEARCH_T_NORMAL)
         return 0;
@@ -409,6 +443,7 @@ mc_search_getstart_result_by_num (mc_search_t * lc_mc_search, int lc_index)
     {
         gint start_pos;
         gint end_pos;
+
         g_match_info_fetch_pos (lc_mc_search->regex_match_info, lc_index, &start_pos, &end_pos);
         return (int) start_pos;
     }
@@ -422,7 +457,7 @@ mc_search_getstart_result_by_num (mc_search_t * lc_mc_search, int lc_index)
 int
 mc_search_getend_result_by_num (mc_search_t * lc_mc_search, int lc_index)
 {
-    if (!lc_mc_search)
+    if (lc_mc_search == NULL)
         return 0;
     if (lc_mc_search->search_type == MC_SEARCH_T_NORMAL)
         return 0;
@@ -430,6 +465,7 @@ mc_search_getend_result_by_num (mc_search_t * lc_mc_search, int lc_index)
     {
         gint start_pos;
         gint end_pos;
+
         g_match_info_fetch_pos (lc_mc_search->regex_match_info, lc_index, &start_pos, &end_pos);
         return (int) end_pos;
     }

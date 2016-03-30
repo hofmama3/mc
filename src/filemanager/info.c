@@ -2,8 +2,12 @@
    Panel managing.
 
    Copyright (C) 1994, 1995, 1998, 1999, 2000, 2001, 2002, 2003, 2004,
-   2005, 2007, 2011
+   2005, 2007, 2011, 2013
    The Free Software Foundation, Inc.
+
+   Written by:
+   Slava Zanko <slavazanko@gmail.com>, 2013
+   Andrew Borodin <aborodin@vmail.ru>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -73,7 +77,7 @@ static struct my_statfs myfs_stats;
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-info_box (WInfo *info)
+info_box (WInfo * info)
 {
     Widget *w = WIDGET (info);
 
@@ -83,7 +87,7 @@ info_box (WInfo *info)
     tty_set_normal_attrs ();
     tty_setcolor (NORMAL_COLOR);
     widget_erase (w);
-    draw_box (w->owner, w->y, w->x, w->lines, w->cols, FALSE);
+    tty_draw_box (w->y, w->x, w->lines, w->cols, FALSE);
 
     widget_move (w, 0, (w->cols - len - 2) / 2);
     tty_printf (" %s ", title);
@@ -98,7 +102,7 @@ info_box (WInfo *info)
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-info_show_info (WInfo *info)
+info_show_info (WInfo * info)
 {
     Widget *w = WIDGET (info);
     static int i18n_adjust = 0;
@@ -121,13 +125,7 @@ info_show_info (WInfo *info)
     if (get_current_type () != view_listing)
         return;
 
-    {
-        char *cwd_str;
-
-        cwd_str = vfs_path_to_str (current_panel->cwd_vpath);
-        my_statfs (&myfs_stats, cwd_str);
-        g_free (cwd_str);
-    }
+    my_statfs (&myfs_stats, vfs_path_as_str (current_panel->cwd_vpath));
 
     st = current_panel->dir.list[current_panel->selected].st;
 
@@ -185,8 +183,7 @@ info_show_info (WInfo *info)
 
     case 13:
         widget_move (w, 13, 3);
-        str_printf (buff, _("Device:    %s"),
-                    str_trunc (myfs_stats.device, w->cols - i18n_adjust));
+        str_printf (buff, _("Device:    %s"), str_trunc (myfs_stats.device, w->cols - i18n_adjust));
         tty_print_string (buff->str);
         g_string_set_size (buff, 0);
     case 12:
@@ -278,7 +275,7 @@ info_hook (void *data)
     other_widget = get_panel_widget (get_current_index ());
     if (!other_widget)
         return;
-    if (dlg_overlap (WIDGET (info), other_widget))
+    if (widget_overlapped (WIDGET (info), other_widget))
         return;
 
     info->ready = 1;
@@ -292,31 +289,28 @@ info_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *da
 {
     struct WInfo *info = (struct WInfo *) w;
 
-    (void) sender;
-    (void) data;
-
     switch (msg)
     {
-    case WIDGET_INIT:
+    case MSG_INIT:
         init_my_statfs ();
         add_hook (&select_file_hook, info_hook, info);
         info->ready = 0;
         return MSG_HANDLED;
 
-    case WIDGET_DRAW:
+    case MSG_DRAW:
         info_hook (info);
         return MSG_HANDLED;
 
-    case WIDGET_FOCUS:
+    case MSG_FOCUS:
         return MSG_NOT_HANDLED;
 
-    case WIDGET_DESTROY:
+    case MSG_DESTROY:
         delete_hook (&select_file_hook, info_hook);
         free_my_statfs ();
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -332,7 +326,7 @@ info_new (int y, int x, int lines, int cols)
 
     info = g_new (struct WInfo, 1);
     w = WIDGET (info);
-    init_widget (w, y, x, lines, cols, info_callback, NULL);
+    widget_init (w, y, x, lines, cols, info_callback, NULL);
     /* We do not want the cursor */
     widget_want_cursor (w, FALSE);
 

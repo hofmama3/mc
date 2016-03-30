@@ -1,11 +1,12 @@
 /*
    Directory cache support
 
-   Copyright (C) 1998, 2011
+   Copyright (C) 1998, 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
    Pavel Machek <pavel@ucw.cz>, 1998
+   Slava Zanko <slavazanko@gmail.com>, 2013
 
    This file is part of the Midnight Commander.
 
@@ -244,7 +245,6 @@ vfs_s_find_entry_linear (struct vfs_class *me, struct vfs_s_inode *root,
 {
     struct vfs_s_entry *ent = NULL;
     char *const path = g_strdup (a_path);
-    struct vfs_s_entry *retval = NULL;
     GList *iter;
 
     if (root->super->root != root)
@@ -261,11 +261,11 @@ vfs_s_find_entry_linear (struct vfs_class *me, struct vfs_s_inode *root,
         dirname = g_path_get_dirname (path);
         name = g_path_get_basename (path);
         ino = vfs_s_find_inode (me, root->super, dirname, follow, flags | FL_DIR);
-        retval = vfs_s_find_entry_tree (me, ino, name, follow, flags);
+        ent = vfs_s_find_entry_tree (me, ino, name, follow, flags);
         g_free (dirname);
         g_free (name);
         g_free (path);
-        return retval;
+        return ent;
     }
 
     iter = g_list_find_custom (root->subdir, path, (GCompareFunc) vfs_s_entry_compare);
@@ -561,7 +561,6 @@ vfs_s_readlink (const vfs_path_t * vpath, char *buf, size_t size)
 static ssize_t
 vfs_s_read (void *fh, char *buffer, size_t count)
 {
-    int n;
     struct vfs_class *me = FH_SUPER->me;
 
     if (FH->linear == LS_LINEAR_PREOPEN)
@@ -578,6 +577,8 @@ vfs_s_read (void *fh, char *buffer, size_t count)
 
     if (FH->handle != -1)
     {
+        ssize_t n;
+
         n = read (FH->handle, buffer, count);
         if (n < 0)
             me->verrno = errno;
@@ -592,7 +593,6 @@ vfs_s_read (void *fh, char *buffer, size_t count)
 static ssize_t
 vfs_s_write (void *fh, const char *buffer, size_t count)
 {
-    int n;
     struct vfs_class *me = FH_SUPER->me;
 
     if (FH->linear)
@@ -601,6 +601,8 @@ vfs_s_write (void *fh, const char *buffer, size_t count)
     FH->changed = 1;
     if (FH->handle != -1)
     {
+        ssize_t n;
+
         n = write (FH->handle, buffer, count);
         if (n < 0)
             me->verrno = errno;
@@ -1235,7 +1237,6 @@ vfs_s_open (const vfs_path_t * vpath, int flags, mode_t mode)
         char *dirname, *name;
         struct vfs_s_entry *ent;
         struct vfs_s_inode *dir;
-        int tmp_handle;
 
         /* If the filesystem is read-only, disable file creation */
         if (!(flags & O_CREAT) || !(path_element->class->write))
@@ -1255,10 +1256,11 @@ vfs_s_open (const vfs_path_t * vpath, int flags, mode_t mode)
         vfs_s_insert_entry (path_element->class, dir, ent);
         if ((VFSDATA (path_element)->flags & VFS_S_USETMP) != 0)
         {
+            int tmp_handle;
             vfs_path_t *tmp_vpath;
 
             tmp_handle = vfs_mkstemps (&tmp_vpath, path_element->class->name, name);
-            ino->localname = vfs_path_to_str (tmp_vpath);
+            ino->localname = g_strdup (vfs_path_as_str (tmp_vpath));
             vfs_path_free (tmp_vpath);
             if (tmp_handle == -1)
             {
@@ -1336,7 +1338,8 @@ vfs_s_retrieve_file (struct vfs_class *me, struct vfs_s_inode *ino)
     /* If you want reget, you'll have to open file with O_LINEAR */
     off_t total = 0;
     char buffer[8192];
-    int handle, n;
+    int handle;
+    ssize_t n;
     off_t stat_size = ino->st.st_size;
     vfs_file_handler_t fh;
     vfs_path_t *tmp_vpath;
@@ -1350,7 +1353,7 @@ vfs_s_retrieve_file (struct vfs_class *me, struct vfs_s_inode *ino)
     fh.handle = -1;
 
     handle = vfs_mkstemps (&tmp_vpath, me->name, ino->ent->name);
-    ino->localname = vfs_path_to_str (tmp_vpath);
+    ino->localname = g_strdup (vfs_path_as_str (tmp_vpath));
     vfs_path_free (tmp_vpath);
     if (handle == -1)
     {
@@ -1509,6 +1512,8 @@ vfs_s_get_line (struct vfs_class *me, int sock, char *buf, int buf_len, char ter
             int ret2;
             ret1 = fwrite (buf, 1, 1, logfile);
             ret2 = fflush (logfile);
+            (void) ret1;
+            (void) ret2;
         }
         if (*buf == term)
         {
@@ -1527,6 +1532,8 @@ vfs_s_get_line (struct vfs_class *me, int sock, char *buf, int buf_len, char ter
             int ret2;
             ret1 = fwrite (&c, 1, 1, logfile);
             ret2 = fflush (logfile);
+            (void) ret1;
+            (void) ret2;
         }
         if (c == '\n')
             return 1;
@@ -1539,7 +1546,6 @@ vfs_s_get_line (struct vfs_class *me, int sock, char *buf, int buf_len, char ter
 int
 vfs_s_get_line_interruptible (struct vfs_class *me, char *buffer, int size, int fd)
 {
-    int n;
     int i;
 
     (void) me;
@@ -1547,6 +1553,8 @@ vfs_s_get_line_interruptible (struct vfs_class *me, char *buffer, int size, int 
     tty_enable_interrupt_key ();
     for (i = 0; i < size - 1; i++)
     {
+        int n;
+
         n = read (fd, buffer + i, 1);
         tty_disable_interrupt_key ();
         if (n == -1 && errno == EINTR)

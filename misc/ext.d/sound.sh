@@ -6,6 +6,8 @@
 action=$1
 filetype=$2
 
+[ -n "${MC_XDG_OPEN}" ] || MC_XDG_OPEN="xdg-open"
+
 do_view_action() {
     filetype=$1
 
@@ -15,7 +17,7 @@ do_view_action() {
             sed -n '/^Title/,/^Comment/p;/^MPEG/,/^Audio/p'
         ;;
     ogg)
-        ogginfo "${MC_EXT_SELECTED}"
+        ogginfo "${MC_EXT_FILENAME}"
         ;;
     wma)
         mplayer -quiet -slave -frames 0 -vo null -ao null -identify "${MC_EXT_FILENAME}" 2>/dev/null | \
@@ -82,7 +84,7 @@ view)
     do_view_action "${filetype}"
     ;;
 open)
-    xdg-open "${MC_EXT_FILENAME}" 2>/dev/null || \
+    "${MC_XDG_OPEN}" "${MC_EXT_FILENAME}" 2>/dev/null || \
         do_open_action "${filetype}"
     ;;
 *)

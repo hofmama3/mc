@@ -2,7 +2,7 @@
    Widgets for the Midnight Commander
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2010, 2011
+   2004, 2005, 2006, 2007, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Authors:
@@ -11,7 +11,7 @@
    Jakub Jelinek, 1995
    Andrej Borsenkow, 1996
    Norbert Warmuth, 1997
-   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010, 2013
 
    This file is part of the Midnight Commander.
 
@@ -56,50 +56,50 @@
 static cb_ret_t
 check_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
-    WCheck *c = (WCheck *) w;
-    Dlg_head *h = w->owner;
+    WCheck *c = CHECK (w);
 
     switch (msg)
     {
-    case WIDGET_HOTKEY:
+    case MSG_HOTKEY:
         if (c->text.hotkey != NULL)
         {
             if (g_ascii_tolower ((gchar) c->text.hotkey[0]) == parm)
             {
-                send_message (w, sender, WIDGET_KEY, ' ', data);    /* make action */
+                /* make action */
+                send_message (w, sender, MSG_KEY, ' ', data);
                 return MSG_HANDLED;
             }
         }
         return MSG_NOT_HANDLED;
 
-    case WIDGET_KEY:
+    case MSG_KEY:
         if (parm != ' ')
             return MSG_NOT_HANDLED;
         c->state ^= C_BOOL;
         c->state ^= C_CHANGE;
-        h->callback (h, w, DLG_ACTION, 0, NULL);
-        send_message (w, sender, WIDGET_FOCUS, ' ', data);
+        send_message (WIDGET (w)->owner, w, MSG_ACTION, 0, NULL);
+        send_message (w, sender, MSG_FOCUS, ' ', data);
         return MSG_HANDLED;
 
-    case WIDGET_CURSOR:
+    case MSG_CURSOR:
         widget_move (c, 0, 1);
         return MSG_HANDLED;
 
-    case WIDGET_FOCUS:
-    case WIDGET_UNFOCUS:
-    case WIDGET_DRAW:
-        widget_selectcolor (w, msg == WIDGET_FOCUS, FALSE);
+    case MSG_FOCUS:
+    case MSG_UNFOCUS:
+    case MSG_DRAW:
+        widget_selectcolor (w, msg == MSG_FOCUS, FALSE);
         widget_move (c, 0, 0);
         tty_print_string ((c->state & C_BOOL) ? "[x] " : "[ ] ");
-        hotkey_draw (w, c->text, msg == WIDGET_FOCUS);
+        hotkey_draw (w, c->text, msg == MSG_FOCUS);
         return MSG_HANDLED;
 
-    case WIDGET_DESTROY:
+    case MSG_DESTROY:
         release_hotkey (c->text);
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -118,9 +118,9 @@ check_event (Gpm_Event * event, void *data)
         dlg_select_widget (w);
         if ((event->type & GPM_UP) != 0)
         {
-            send_message (w, NULL, WIDGET_KEY, ' ', NULL);
-            send_message (w, NULL, WIDGET_FOCUS, 0, NULL);
-            w->owner->callback (w->owner, w, DLG_POST_KEY, ' ', NULL);
+            send_message (w, NULL, MSG_KEY, ' ', NULL);
+            send_message (w, NULL, MSG_FOCUS, 0, NULL);
+            send_message (w->owner, w, MSG_POST_KEY, ' ', NULL);
         }
     }
 
@@ -140,7 +140,7 @@ check_new (int y, int x, int state, const char *text)
     c = g_new (WCheck, 1);
     w = WIDGET (c);
     c->text = parse_hotkey (text);
-    init_widget (w, y, x, 1, 4 + hotkey_width (c->text), check_callback, check_event);
+    widget_init (w, y, x, 1, 4 + hotkey_width (c->text), check_callback, check_event);
     /* 4 is width of "[X] " */
     c->state = state ? C_BOOL : 0;
     widget_want_hotkey (w, TRUE);

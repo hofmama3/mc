@@ -65,7 +65,7 @@ shell_patterns=0
 
 = f \.c$ & t r
 + f \.c$ & t r & ! t t
-с       Compile and link current .c file
+c       Compile and link current .c file
         make `basename %f .c` 2>/dev/null || cc -O -o `basename %f .c` %f
 
 + t r & ! t t
@@ -107,15 +107,15 @@ D       Delete tagged files if a copy exists in the other directory.
         for i in %t
         do
           if [ -f "%D/$i" ]; then
-            SUM1="`sum $i`"
-            SUM2="`sum %D/$i`"
+            SUM1="`sum \"$i\"`"
+            SUM2="`sum \"%D/$i\"`"
             if [ "$SUM1" = "$SUM2" ]; then
 	      rm "$i" && echo "${i}: DELETED."
 	    else
 	      echo "$i and %D/$i differ: NOT deleted."
 	    fi
 	  else
-	    echo "%i has no copy in %D: NOT deleted."
+	    echo "$i has no copy in %D: NOT deleted."
           fi
         done
 

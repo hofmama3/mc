@@ -2,7 +2,7 @@
    Widgets for the Midnight Commander
 
    Copyright (C) 1994, 1995, 1996, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2010, 2011
+   2004, 2005, 2006, 2007, 2009, 2010, 2011, 2013
    The Free Software Foundation, Inc.
 
    Authors:
@@ -11,7 +11,7 @@
    Jakub Jelinek, 1995
    Andrej Borsenkow, 1996
    Norbert Warmuth, 1997
-   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010
+   Andrew Borodin <aborodin@vmail.ru>, 2009, 2010, 2013
 
    This file is part of the Midnight Commander.
 
@@ -59,36 +59,42 @@
 static cb_ret_t
 label_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *data)
 {
-    WLabel *l = (WLabel *) w;
-    Dlg_head *h = w->owner;
+    WLabel *l = LABEL (w);
+    WDialog *h = w->owner;
 
     switch (msg)
     {
-    case WIDGET_INIT:
+    case MSG_INIT:
         return MSG_HANDLED;
 
         /* We don't want to get the focus */
-    case WIDGET_FOCUS:
+    case MSG_FOCUS:
         return MSG_NOT_HANDLED;
 
-    case WIDGET_DRAW:
+    case MSG_DRAW:
         {
             char *p = l->text;
             int y = 0;
-            gboolean disabled = (w->options & W_DISABLED) != 0;
+            gboolean disabled;
+            align_crt_t align;
 
             if (l->text == NULL)
                 return MSG_HANDLED;
+
+            disabled = (w->options & W_DISABLED) != 0;
 
             if (l->transparent)
                 tty_setcolor (disabled ? DISABLED_COLOR : DEFAULT_COLOR);
             else
                 tty_setcolor (disabled ? DISABLED_COLOR : h->color[DLG_COLOR_NORMAL]);
 
+            align = (w->pos_flags & WPOS_CENTER_HORZ) != 0 ? J_CENTER_LEFT : J_LEFT;
+
             while (TRUE)
             {
                 char *q;
                 char c = '\0';
+
 
                 q = strchr (p, '\n');
                 if (q != NULL)
@@ -98,7 +104,7 @@ label_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *d
                 }
 
                 widget_move (w, y, 0);
-                tty_print_string (str_fit_to_term (p, w->cols, J_LEFT));
+                tty_print_string (str_fit_to_term (p, w->cols, align));
 
                 if (q == NULL)
                     break;
@@ -110,12 +116,12 @@ label_callback (Widget * w, Widget * sender, widget_msg_t msg, int parm, void *d
             return MSG_HANDLED;
         }
 
-    case WIDGET_DESTROY:
+    case MSG_DESTROY:
         g_free (l->text);
         return MSG_HANDLED;
 
     default:
-        return default_widget_callback (sender, msg, parm, data);
+        return widget_default_callback (w, sender, msg, parm, data);
     }
 }
 
@@ -136,7 +142,7 @@ label_new (int y, int x, const char *text)
 
     l = g_new (WLabel, 1);
     w = WIDGET (l);
-    init_widget (w, y, x, lines, cols, label_callback, NULL);
+    widget_init (w, y, x, lines, cols, label_callback, NULL);
 
     l->text = g_strdup (text);
     l->auto_adjust_cols = TRUE;
@@ -176,8 +182,7 @@ label_set_text (WLabel * label, const char *text)
         }
     }
 
-    if (w->owner != NULL)
-        send_message (w, NULL, WIDGET_DRAW, 0, NULL);
+    widget_redraw (w);
 
     if (newcols < w->cols)
         w->cols = newcols;

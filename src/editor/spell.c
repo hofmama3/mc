@@ -35,6 +35,8 @@
 #endif
 #include "lib/strutil.h"
 
+#include "src/setup.h"
+
 #include "edit-impl.h"
 #include "spell.h"
 
@@ -284,6 +286,9 @@ aspell_init (void)
 {
     AspellCanHaveError *error = NULL;
 
+    if (strcmp (spell_language, "NONE") == 0)
+        return;
+
     if (global_speller != NULL)
         return;
 
@@ -300,6 +305,9 @@ aspell_init (void)
 
     global_speller->config = mc_new_aspell_config ();
     global_speller->speller = NULL;
+
+    if (spell_language != NULL)
+        mc_aspell_config_replace (global_speller->config, "lang", spell_language);
 
     error = mc_new_aspell_speller (global_speller->config);
 
@@ -431,9 +439,11 @@ aspell_set_lang (const char *lang)
 {
     if (lang != NULL)
     {
-        int res;
         AspellCanHaveError *error;
         const char *spell_codeset;
+
+        g_free (spell_language);
+        spell_language = g_strdup (lang);
 
 #ifdef HAVE_CHARSET
         if (mc_global.source_codepage > 0)
@@ -442,8 +452,8 @@ aspell_set_lang (const char *lang)
 #endif
             spell_codeset = str_detect_termencoding ();
 
-        res = mc_aspell_config_replace (global_speller->config, "lang", lang);
-        res = mc_aspell_config_replace (global_speller->config, "encoding", spell_codeset);
+        mc_aspell_config_replace (global_speller->config, "lang", lang);
+        mc_aspell_config_replace (global_speller->config, "encoding", spell_codeset);
 
         /* the returned pointer should _not_ need to be deleted */
         if (global_speller->speller != NULL)

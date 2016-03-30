@@ -1,12 +1,12 @@
 /* Virtual File System: SFTP file system.
    The SSH config parser
 
-   Copyright (C) 2011
+   Copyright (C) 2011, 2013
    The Free Software Foundation, Inc.
 
    Written by:
    Ilia Maslakov <il.smind@gmail.com>, 2011
-   Slava Zanko <slavazanko@gmail.com>, 2011, 2012
+   Slava Zanko <slavazanko@gmail.com>, 2011, 2012, 2013
 
    This file is part of the Midnight Commander.
 
@@ -32,6 +32,7 @@
 #include "lib/global.h"
 
 #include "lib/search.h"
+#include "lib/util.h"           /* tilde_expand() */
 #include "lib/vfs/utilvfs.h"
 
 #include "internal.h"
@@ -120,8 +121,10 @@ sftpfs_correct_file_name (const char *filename)
     vfs_path_t *vpath;
     char *ret_value;
 
-    vpath = vfs_path_from_str (filename);
-    ret_value = vfs_path_to_str (vpath);
+    ret_value = tilde_expand (filename);
+    vpath = vfs_path_from_str (ret_value);
+    g_free (ret_value);
+    ret_value = g_strdup (vfs_path_as_str (vpath));
     vfs_path_free (vpath);
     return ret_value;
 }
@@ -194,7 +197,7 @@ sftpfs_fill_config_entity_from_string (sftpfs_ssh_config_entity_t * config_entit
  * @param config_entity      config entity structure
  * @param vpath_element      path element with host data (hostname, port)
  * @param error              pointer to the error handler
- * @return TRUE if config entity was filled sucessfully, FALSE otherwise
+ * @return TRUE if config entity was filled successfully, FALSE otherwise
  */
 
 static gboolean
@@ -207,7 +210,7 @@ sftpfs_fill_config_entity_from_config (FILE * ssh_config_handler,
     gboolean pattern_block_hit = FALSE;
     mc_search_t *host_regexp;
 
-    host_regexp = mc_search_new ("^\\s*host\\s+(.*)$", -1);
+    host_regexp = mc_search_new ("^\\s*host\\s+(.*)$", -1, DEFAULT_CHARSET);
     host_regexp->search_type = MC_SEARCH_T_REGEX;
     host_regexp->is_case_sensitive = FALSE;
 
@@ -219,7 +222,7 @@ sftpfs_fill_config_entity_from_config (FILE * ssh_config_handler,
             if (errno != 0)
             {
                 g_set_error (error, MC_ERROR, errno,
-                             _("sftp: an error occured while reading %s: %s"), SFTPFS_SSH_CONFIG,
+                             _("sftp: an error occurred while reading %s: %s"), SFTPFS_SSH_CONFIG,
                              strerror (errno));
                 mc_search_free (host_regexp);
                 return FALSE;
@@ -250,8 +253,7 @@ sftpfs_fill_config_entity_from_config (FILE * ssh_config_handler,
             {
                 mc_search_t *pattern_regexp;
 
-                pattern_block_hit = FALSE;
-                pattern_regexp = mc_search_new (host_pattern, -1);
+                pattern_regexp = mc_search_new (host_pattern, -1, DEFAULT_CHARSET);
                 pattern_regexp->search_type = MC_SEARCH_T_GLOB;
                 pattern_regexp->is_case_sensitive = FALSE;
                 pattern_regexp->is_entire_line = TRUE;
@@ -394,7 +396,8 @@ sftpfs_init_config_variables_patterns (void)
 
     for (i = 0; config_variables[i].pattern != NULL; i++)
     {
-        config_variables[i].pattern_regexp = mc_search_new (config_variables[i].pattern, -1);
+        config_variables[i].pattern_regexp =
+            mc_search_new (config_variables[i].pattern, -1, DEFAULT_CHARSET);
         config_variables[i].pattern_regexp->search_type = MC_SEARCH_T_REGEX;
         config_variables[i].pattern_regexp->is_case_sensitive = FALSE;
         config_variables[i].offset = structure_offsets[i];
